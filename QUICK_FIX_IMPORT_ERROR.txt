@@ -1,0 +1,114 @@
+╔══════════════════════════════════════════════════════════════════════╗
+║             QUICK FIX: "No module named 'app'" Error                 ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║  This error means your WSGI file has the WRONG project path.        ║
+║                                                                      ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  🔧 QUICK FIX (5 minutes)                                            ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║  STEP 1: Find Your Project Path                                     ║
+║  ────────────────────────────────                                   ║
+║  On PythonAnywhere Bash console, run:                                ║
+║                                                                      ║
+║    cd ~                                                              ║
+║    find . -name "app.py" -type f                                     ║
+║                                                                      ║
+║  You'll see something like:                                          ║
+║    ./club-management-backend/app.py                                  ║
+║                                                                      ║
+║  The directory is: club-management-backend                           ║
+║                                                                      ║
+║  STEP 2: Get Full Path                                               ║
+║  ────────────────────                                                ║
+║    cd ~/club-management-backend                                      ║
+║    pwd                                                               ║
+║                                                                      ║
+║  Copy the output. It will be like:                                   ║
+║    /home/clubmanagment/club-management-backend                       ║
+║                                                                      ║
+║  STEP 3: Update WSGI File                                            ║
+║  ────────────────────────                                            ║
+║  Go to: Web tab → WSGI configuration file (click the link)          ║
+║                                                                      ║
+║  DELETE everything and paste this:                                   ║
+║                                                                      ║
+╠══════════════════════════════════════════════════════════════════════╣
+
+import sys
+import os
+
+# CHANGE THIS to match your path from Step 2!
+project_home = '/home/clubmanagment/club-management-backend'
+
+if project_home not in sys.path:
+    sys.path.insert(0, project_home)
+
+os.environ['DATABASE_URL'] = f'sqlite:///{project_home}/instance/club_management.db'
+os.environ['SECRET_KEY'] = 'change-me-to-random-string'
+os.environ['UPLOAD_FOLDER'] = f'{project_home}/uploads'
+
+from app import create_app
+application = create_app()
+
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║  STEP 4: Update Virtualenv Path                                      ║
+║  ──────────────────────────                                          ║
+║  In Web tab, find "Virtualenv:" section                              ║
+║  Enter (using YOUR path from Step 2):                                ║
+║                                                                      ║
+║    /home/clubmanagment/club-management-backend/venv                  ║
+║                                                                      ║
+║  STEP 5: Reload                                                      ║
+║  ──────────────                                                      ║
+║  Click the big green "Reload" button at top of Web tab               ║
+║                                                                      ║
+║  STEP 6: Test                                                        ║
+║  ──────────                                                          ║
+║  Visit: https://clubmanagment.pythonanywhere.com/api/health         ║
+║                                                                      ║
+║  ✅ Should see: {"status":"healthy",...}                            ║
+║                                                                      ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  🚨 STILL NOT WORKING?                                               ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║  Run diagnostic script on PythonAnywhere:                            ║
+║                                                                      ║
+║    cd ~/club-management-backend                                      ║
+║    chmod +x diagnose_pythonanywhere.sh                               ║
+║    ./diagnose_pythonanywhere.sh                                      ║
+║                                                                      ║
+║  This will show you EXACTLY what paths to use.                       ║
+║                                                                      ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  📋 COMMON PATH MISTAKES                                             ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║  ❌ /home/clubmanagment/club-management/backend                     ║
+║     (wrong - extra directory level)                                  ║
+║                                                                      ║
+║  ❌ /home/clubmanagment/backend                                     ║
+║     (wrong - missing club-management-backend)                        ║
+║                                                                      ║
+║  ❌ ~/club-management-backend                                       ║
+║     (wrong - WSGI needs absolute path, not ~)                        ║
+║                                                                      ║
+║  ✅ /home/clubmanagment/club-management-backend                     ║
+║     (correct - absolute path to project)                             ║
+║                                                                      ║
+╠══════════════════════════════════════════════════════════════════════╣
+║  💡 PRO TIP                                                          ║
+╠══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║  Check error log after each change:                                  ║
+║  Web tab → Error log (click to view latest)                          ║
+║                                                                      ║
+║  If you see different errors (not "No module named 'app'"),          ║
+║  that's PROGRESS! The import is working.                             ║
+║                                                                      ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+Need more help? See: TROUBLESHOOT_IMPORT_ERROR.txt

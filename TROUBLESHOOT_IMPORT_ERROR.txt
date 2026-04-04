@@ -1,0 +1,171 @@
+====================================================================
+PYTHONANYWHERE IMPORT ERROR - TROUBLESHOOTING
+====================================================================
+
+Error: ModuleNotFoundError: No module named 'app'
+
+This means the WSGI file can't find your app.py file.
+
+====================================================================
+SOLUTION 1: Check Project Path (Most Common Issue)
+====================================================================
+
+The WSGI file needs the CORRECT path to your project.
+
+On PythonAnywhere Bash console, run:
+
+cd ~
+ls -la
+
+Look for your project directory. It might be:
+- club-management-backend  (if you cloned from GitHub)
+- club-management/backend  (if you uploaded manually)
+- backend                  (if you uploaded and extracted)
+
+Once you find it, run:
+cd YOUR_DIRECTORY_NAME
+pwd
+
+Copy the output (this is your project path).
+
+====================================================================
+SOLUTION 2: Update WSGI Configuration
+====================================================================
+
+Go to PythonAnywhere Web tab → Click on WSGI configuration file
+
+Replace the ENTIRE content with this (update the path):
+
+----------------------------------------
+import sys
+import os
+
+# IMPORTANT: Update this path to match YOUR project location
+# Run 'pwd' in your project directory to get the correct path
+project_home = '/home/clubmanagment/club-management-backend'
+
+if project_home not in sys.path:
+    sys.path.insert(0, project_home)
+
+# Environment variables
+os.environ['DATABASE_URL'] = 'sqlite:////' + project_home + '/instance/club_management.db'
+os.environ['SECRET_KEY'] = 'your-secret-key-change-this'
+os.environ['UPLOAD_FOLDER'] = project_home + '/uploads'
+
+# Import Flask app
+from app import create_app
+application = create_app()
+----------------------------------------
+
+Replace '/home/clubmanagment/club-management-backend' with YOUR actual path!
+
+====================================================================
+SOLUTION 3: Verify Directory Structure
+====================================================================
+
+On PythonAnywhere Bash console:
+
+cd ~/club-management-backend  # or your directory name
+ls -la
+
+You should see:
+- app.py
+- models.py
+- config.py
+- requirements.txt
+- routes/
+
+If you DON'T see app.py, you're in the wrong directory!
+
+Find the correct directory:
+find ~ -name "app.py" -type f 2>/dev/null
+
+====================================================================
+SOLUTION 4: Check Virtual Environment
+====================================================================
+
+Make sure virtualenv path in Web tab matches your project:
+
+Correct format:
+/home/clubmanagment/YOUR_DIRECTORY_NAME/venv
+
+Example:
+/home/clubmanagment/club-management-backend/venv
+
+====================================================================
+STEP-BY-STEP FIX
+====================================================================
+
+1. Open Bash console on PythonAnywhere
+
+2. Find your project:
+   cd ~
+   find . -name "app.py" -type f
+
+3. Go to project directory (example):
+   cd ~/club-management-backend
+
+4. Get the full path:
+   pwd
+   
+   Output will be something like:
+   /home/clubmanagment/club-management-backend
+
+5. Go to Web tab → WSGI configuration file
+
+6. Update project_home to match the path from step 4:
+   project_home = '/home/clubmanagment/club-management-backend'
+
+7. Make sure the virtualenv path is correct:
+   /home/clubmanagment/club-management-backend/venv
+
+8. Click "Save" on WSGI file
+
+9. Click "Reload" on web app
+
+10. Test:
+    https://clubmanagment.pythonanywhere.com/api/health
+
+====================================================================
+COMMON PATH MISTAKES
+====================================================================
+
+❌ WRONG:
+project_home = '/home/clubmanagment/club-management/backend'
+(extra /club-management/ if you only cloned backend)
+
+❌ WRONG:
+project_home = '/home/clubmanagment/backend'
+(missing club-management-backend)
+
+✅ CORRECT (if cloned from GitHub):
+project_home = '/home/clubmanagment/club-management-backend'
+
+====================================================================
+VERIFY IT'S WORKING
+====================================================================
+
+After fixing, check the error log:
+
+Web tab → Error log (click to view)
+
+If you see NEW errors (not the import error), you're making progress!
+
+If you still see "No module named 'app'", the path is still wrong.
+
+====================================================================
+QUICK TEST
+====================================================================
+
+In Bash console:
+
+cd ~/club-management-backend  # your directory
+source venv/bin/activate
+python -c "from app import create_app; print('✅ Import successful!')"
+
+If this works, the problem is ONLY the WSGI path configuration.
+If this fails, you need to reinstall dependencies:
+
+pip install -r requirements.txt
+
+====================================================================
