@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify
+from flask import Flask, jsonify, render_template
 from flask_cors import CORS
 from config import Config
 from models import db, User
@@ -64,6 +64,28 @@ def create_app(config_class=Config):
     app.register_blueprint(coaches, url_prefix='/api/coaches')
     app.register_blueprint(player_payments, url_prefix='/api/players')  # Nested under /api/players
     app.register_blueprint(trainings_bp, url_prefix='/api/trainings')
+
+    @app.route('/')
+    def root():
+        return jsonify({
+            'message': 'Club Management API is running',
+            'health': '/api/health',
+            'base': '/api',
+            'privacy_policy': '/privacy-policy',
+        })
+
+    @app.route('/api')
+    def api_root():
+        return jsonify({
+            'message': 'Club Management API base endpoint',
+            'health': '/api/health',
+            'privacy_policy': '/privacy-policy',
+        })
+
+    @app.route('/privacy-policy')
+    @app.route('/privacy-policy.html')
+    def privacy_policy_page():
+        return render_template('privacy_policy.html')
     
     # Health check endpoint
     @app.route('/api/health')
