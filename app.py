@@ -72,6 +72,7 @@ def create_app(config_class=Config):
             'health': '/api/health',
             'base': '/api',
             'privacy_policy': '/privacy-policy',
+            'delete_account': '/delete-account',
         })
 
     @app.route('/api')
@@ -80,12 +81,18 @@ def create_app(config_class=Config):
             'message': 'Club Management API base endpoint',
             'health': '/api/health',
             'privacy_policy': '/privacy-policy',
+            'delete_account': '/delete-account',
         })
 
     @app.route('/privacy-policy')
     @app.route('/privacy-policy.html')
     def privacy_policy_page():
         return render_template('privacy_policy.html')
+
+    @app.route('/delete-account')
+    @app.route('/delete-account.html')
+    def delete_account_page():
+        return render_template('delete_account.html')
     
     # Health check endpoint
     @app.route('/api/health')
