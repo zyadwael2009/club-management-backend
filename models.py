@@ -1,5 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
 import uuid
 
 db = SQLAlchemy()
@@ -16,6 +17,9 @@ class Club(db.Model):
     primary_color = db.Column(db.String(7), default='#2196F3')
     secondary_color = db.Column(db.String(7), default='#FFC107')
     logo_url = db.Column(db.String(500), nullable=True)
+    due_date = db.Column(db.Date, nullable=True)
+    is_active = db.Column(db.Boolean, default=True)
+    deactivated_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -32,6 +36,9 @@ class Club(db.Model):
             'primaryColor': self.primary_color,
             'secondaryColor': self.secondary_color,
             'logoUrl': self.logo_url,
+            'dueDate': self.due_date.isoformat() if self.due_date else None,
+            'isActive': self.is_active,
+            'deactivatedAt': self.deactivated_at.isoformat() if self.deactivated_at else None,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
             'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -61,6 +68,32 @@ class Subgroup(db.Model):
             'subgroupType': self.subgroup_type,
             'birthYear': self.birth_year,
             'description': self.description,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+            'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class Training(db.Model):
+    """Training session assigned to one subgroup"""
+    __tablename__ = 'trainings'
+
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    name = db.Column(db.String(255), nullable=False)
+    club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    subgroup_id = db.Column(db.String(36), db.ForeignKey('subgroups.id'), nullable=False)
+    training_date = db.Column(db.Date, nullable=False)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'clubId': self.club_id,
+            'subgroupId': self.subgroup_id,
+            'trainingDate': self.training_date.isoformat() if self.training_date else None,
+            'notes': self.notes,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
             'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
         }
@@ -189,3 +222,244 @@ class CheckIn(db.Model):
                 'paymentStatus': self.player_payment_status,
             }
         }
+
+
+class CheckInTraining(db.Model):
+    """Links each check-in to the selected training session"""
+    __tablename__ = 'checkin_trainings'
+
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    checkin_id = db.Column(db.String(36), db.ForeignKey('checkins.id'), nullable=False, unique=True)
+    training_id = db.Column(db.String(36), db.ForeignKey('trainings.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+# ==================== AUTHENTICATION & AUTHORIZATION ====================
+
+class User(db.Model):
+    """User authentication model - supports superadmin, admin, coach, player roles"""
+    __tablename__ = 'users'
+    
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    username = db.Column(db.String(50), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(20), nullable=False)  # superadmin, admin, coach, player
+    
+    # Related entity IDs based on role
+    club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=True)  # for admin
+    player_id = db.Column(db.String(36), db.ForeignKey('players.id'), nullable=True)  # for player
+    coach_id = db.Column(db.String(36), nullable=True)  # for coach (FK will be added after Coach model)
+    
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def set_password(self, password):
+        """Hash and set the password"""
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        """Verify password against hash"""
+        return check_password_hash(self.password_hash, password)
+    
+    def to_dict(self):
+        """Convert user to dictionary (without password hash)"""
+        return {
+            'id': self.id,
+            'username': self.username,
+            'role': self.role,
+            'clubId': self.club_id,
+            'playerId': self.player_id,
+            'coachId': self.coach_id,
+            'isActive': self.is_active,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+            'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
+        }
+    
+    @staticmethod
+    def create_superadmin(username='zyadw', password='ZWL@2009'):
+        """Create the superadmin user if it doesn't exist"""
+        existing = User.query.filter_by(username=username).first()
+        if existing:
+            return existing
+        
+        superadmin = User(
+            username=username,
+            role='superadmin',
+        )
+        superadmin.set_password(password)
+        db.session.add(superadmin)
+        db.session.commit()
+        return superadmin
+
+
+class Coach(db.Model):
+    """Coach model for managing coaches"""
+    __tablename__ = 'coaches'
+    
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    full_name = db.Column(db.String(255), nullable=False)
+    club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    monthly_salary = db.Column(db.Float, nullable=True)  # Monthly salary amount
+    contact_info = db.Column(db.String(255), nullable=True)  # Phone, email, etc.
+    notes = db.Column(db.Text, nullable=True)
+    image_url = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @property
+    def qr_code(self):
+        return f'CLUB_COACH_{self.id}'
+    
+    def to_dict(self):
+        # Get user info if exists
+        user = User.query.filter_by(coach_id=self.id).first()
+        
+        return {
+            'id': self.id,
+            'fullName': self.full_name,
+            'clubId': self.club_id,
+            'monthlySalary': self.monthly_salary,
+            'contactInfo': self.contact_info,
+            'notes': self.notes,
+            'imageUrl': self.image_url,
+            'qrCode': self.qr_code,
+            'username': user.username if user else None,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+            'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class CoachCheckIn(db.Model):
+    """Coach attendance records"""
+    __tablename__ = 'coach_checkins'
+
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    coach_id = db.Column(db.String(36), db.ForeignKey('coaches.id'), nullable=False)
+    club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    coach_name = db.Column(db.String(255))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'coachId': self.coach_id,
+            'clubId': self.club_id,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'coachSnapshot': {
+                'fullName': self.coach_name,
+            },
+        }
+
+
+class CoachPayment(db.Model):
+    """Track monthly salary payments to coaches"""
+    __tablename__ = 'coach_payments'
+    
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    coach_id = db.Column(db.String(36), db.ForeignKey('coaches.id'), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    payment_date = db.Column(db.Date, nullable=False)
+    payment_month = db.Column(db.String(7), nullable=False)  # Format: YYYY-MM (e.g., "2026-04")
+    expense_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'coachId': self.coach_id,
+            'amount': self.amount,
+            'paymentDate': self.payment_date.isoformat() if self.payment_date else None,
+            'paymentMonth': self.payment_month,
+            'expenseScope': self.expense_scope,
+            'notes': self.notes,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class PlayerPayment(db.Model):
+    """Track payments received from players"""
+    __tablename__ = 'player_payments'
+    
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    player_id = db.Column(db.String(36), db.ForeignKey('players.id'), nullable=False)
+    amount_paid = db.Column(db.Float, nullable=False)  # Amount received FROM player
+    revenue_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
+    payment_date = db.Column(db.Date, nullable=False)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'playerId': self.player_id,
+            'amountPaid': self.amount_paid,
+            'revenueScope': self.revenue_scope,
+            'paymentDate': self.payment_date.isoformat() if self.payment_date else None,
+            'notes': self.notes,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class MatchExpense(db.Model):
+    """Track expenses paid for matches (transport, ambulance, field rent, etc.)"""
+    __tablename__ = 'match_expenses'
+
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    match_id = db.Column(db.String(36), db.ForeignKey('matches.id'), nullable=False)
+    expense_type = db.Column(db.String(30), nullable=False)  # transportation | ambulance | field_rent
+    expense_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
+    amount = db.Column(db.Float, nullable=False)
+    payment_date = db.Column(db.Date, nullable=False)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        match = Match.query.get(self.match_id)
+        return {
+            'id': self.id,
+            'clubId': self.club_id,
+            'matchId': self.match_id,
+            'expenseType': self.expense_type,
+            'expenseScope': self.expense_scope,
+            'amount': self.amount,
+            'paymentDate': self.payment_date.isoformat() if self.payment_date else None,
+            'notes': self.notes,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+            'matchSnapshot': {
+                'opponentName': match.opponent_name if match else None,
+                'matchDate': match.match_date.isoformat() if match and match.match_date else None,
+                'matchType': match.match_type if match else None,
+            },
+        }
+
+
+class GeneralExpense(db.Model):
+    """Track non-match operational expenses (training field rent, clothing)."""
+    __tablename__ = 'general_expenses'
+
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    expense_type = db.Column(db.String(40), nullable=False)  # training_field_rent | clothing
+    expense_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
+    amount = db.Column(db.Float, nullable=False)
+    budget_amount = db.Column(db.Float, nullable=True)  # primarily for clothing expense
+    payment_date = db.Column(db.Date, nullable=False)
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'clubId': self.club_id,
+            'expenseType': self.expense_type,
+            'expenseScope': self.expense_scope,
+            'amount': self.amount,
+            'budgetAmount': self.budget_amount,
+            'paymentDate': self.payment_date.isoformat() if self.payment_date else None,
+            'notes': self.notes,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+        }
+

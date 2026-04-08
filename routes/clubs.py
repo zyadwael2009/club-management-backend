@@ -1,46 +1,110 @@
-from flask import Blueprint, request, jsonify
-from models import db, Club
+from flask import Blueprint, request, jsonify, session
+from models import db, Club, User
+from routes.auth import superadmin_required, login_required
 from datetime import datetime
 
 clubs_bp = Blueprint('clubs', __name__)
 
 
 @clubs_bp.route('', methods=['GET'])
+@login_required
 def get_clubs():
-    """Get all clubs, ordered by creation date (newest first)"""
-    clubs = Club.query.order_by(Club.created_at.desc()).all()
+    """Get all clubs (superadmin sees all, admin sees only their club)"""
+    current_user = User.query.get(session['user_id'])
+    
+    if current_user.role == 'superadmin':
+        # Superadmin sees all clubs
+        clubs = Club.query.order_by(Club.created_at.desc()).all()
+    elif current_user.role == 'admin':
+        # Admin sees only their club
+        clubs = Club.query.filter_by(id=current_user.club_id).all()
+    else:
+        # Coach/Player shouldn't access club list directly
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    
     return jsonify([club.to_dict() for club in clubs])
 
 
 @clubs_bp.route('/<club_id>', methods=['GET'])
+@login_required
 def get_club(club_id):
     """Get a single club by ID"""
     club = Club.query.get_or_404(club_id)
+    
+    current_user = User.query.get(session['user_id'])
+    
+    # Check permissions
+    if current_user.role == 'admin' and club.id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    
     return jsonify(club.to_dict())
 
 
 @clubs_bp.route('', methods=['POST'])
+@superadmin_required
 def create_club():
-    """Create a new club"""
+    """Create a new club with admin user (superadmin only)"""
     data = request.get_json()
     
     if not data or not data.get('name'):
-        return jsonify({'error': 'Name is required'}), 400
+        return jsonify({'error': 'اسم النادي مطلوب'}), 400
     
-    club = Club(
-        name=data['name'],
-        primary_color=data.get('primaryColor', '#2196F3'),
-        secondary_color=data.get('secondaryColor', '#FFC107'),
-        logo_url=data.get('logoUrl'),
-    )
+    # Validate admin username and password
+    admin_username = data.get('adminUsername')
+    admin_password = data.get('adminPassword')
     
-    db.session.add(club)
-    db.session.commit()
+    if not admin_username or not admin_password:
+        return jsonify({'error': 'اسم المستخدم وكلمة المرور للمدير مطلوبان'}), 400
     
-    return jsonify(club.to_dict()), 201
+    # Check if username already exists
+    existing_user = User.query.filter_by(username=admin_username).first()
+    if existing_user:
+        return jsonify({'error': 'اسم المستخدم موجود بالفعل'}), 400
+    
+    if len(admin_password) < 4:
+        return jsonify({'error': 'كلمة المرور يجب أن تكون 4 أحرف على الأقل'}), 400
+    
+    try:
+        due_date = None
+        if data.get('dueDate'):
+            due_date = datetime.fromisoformat(data['dueDate']).date()
+
+        # Create club
+        club = Club(
+            name=data['name'],
+            primary_color=data.get('primaryColor', '#2196F3'),
+            secondary_color=data.get('secondaryColor', '#FFC107'),
+            logo_url=data.get('logoUrl'),
+            due_date=due_date,
+            is_active=True,
+            deactivated_at=None,
+        )
+        db.session.add(club)
+        db.session.flush()  # Get the club ID
+        
+        # Create admin user for this club
+        admin_user = User(
+            username=admin_username,
+            role='admin',
+            club_id=club.id
+        )
+        admin_user.set_password(admin_password)
+        db.session.add(admin_user)
+        
+        db.session.commit()
+        
+        return jsonify({
+            'club': club.to_dict(),
+            'admin': admin_user.to_dict()
+        }), 201
+    
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'فشل إنشاء النادي: {str(e)}'}), 500
 
 
 @clubs_bp.route('/<club_id>', methods=['PUT'])
+@superadmin_required
 def update_club(club_id):
     """Update an existing club"""
     club = Club.query.get_or_404(club_id)
@@ -57,6 +121,12 @@ def update_club(club_id):
         club.secondary_color = data['secondaryColor']
     if 'logoUrl' in data:
         club.logo_url = data['logoUrl']
+    if 'dueDate' in data:
+        club.due_date = datetime.fromisoformat(data['dueDate']).date() if data['dueDate'] else None
+    if 'isActive' in data:
+        club.is_active = bool(data['isActive'])
+        if club.is_active:
+            club.deactivated_at = None
     
     club.updated_at = datetime.utcnow()
     db.session.commit()
@@ -65,6 +135,7 @@ def update_club(club_id):
 
 
 @clubs_bp.route('/<club_id>', methods=['DELETE'])
+@superadmin_required
 def delete_club(club_id):
     """Delete a club and all associated data"""
     club = Club.query.get_or_404(club_id)
@@ -73,3 +144,39 @@ def delete_club(club_id):
     db.session.commit()
     
     return jsonify({'message': 'Club deleted successfully'})
+
+
+@clubs_bp.route('/<club_id>/deactivate', methods=['PUT'])
+@superadmin_required
+def deactivate_club_accounts(club_id):
+    club = Club.query.get_or_404(club_id)
+    users = User.query.filter_by(club_id=club_id).all()
+    for user in users:
+        if user.role != 'superadmin':
+            user.is_active = False
+
+    club.is_active = False
+    club.deactivated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'message': 'تم تعطيل جميع حسابات النادي', 'club': club.to_dict()}), 200
+
+
+@clubs_bp.route('/<club_id>/reactivate', methods=['PUT'])
+@superadmin_required
+def reactivate_club_accounts(club_id):
+    club = Club.query.get_or_404(club_id)
+    data = request.get_json() or {}
+
+    due_date = data.get('dueDate')
+    if due_date:
+        club.due_date = datetime.fromisoformat(due_date).date()
+
+    users = User.query.filter_by(club_id=club_id).all()
+    for user in users:
+        if user.role != 'superadmin':
+            user.is_active = True
+
+    club.is_active = True
+    club.deactivated_at = None
+    db.session.commit()
+    return jsonify({'message': 'تم إعادة تفعيل حسابات النادي', 'club': club.to_dict()}), 200

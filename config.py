@@ -4,6 +4,12 @@ from datetime import timedelta
 class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
     
+    # Session configuration
+    SESSION_COOKIE_SECURE = False  # Set to True in production with HTTPS
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    PERMANENT_SESSION_LIFETIME = timedelta(days=7)
+    
     # Database - Use PostgreSQL in production, SQLite for local dev
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
         'sqlite:///club_management.db'
@@ -24,3 +30,4 @@ class Config:
     # CORS - Allow all origins (for mobile app access)
     # In production, consider restricting to specific origins
     CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*')
+
