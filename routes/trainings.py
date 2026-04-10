@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, Training, Subgroup, User
+from models import db, Training, Subgroup, User, Player, CheckIn, CheckInTraining
 from routes.auth import login_required, admin_or_superadmin_required
 from datetime import datetime
 
@@ -43,6 +43,7 @@ def create_training():
     name = data.get('name')
     club_id = data.get('clubId')
     subgroup_id = data.get('subgroupId')
+    training_scope = (data.get('trainingScope') or 'club').strip().lower()
     training_date = data.get('trainingDate')
 
     if not name:
@@ -51,6 +52,8 @@ def create_training():
         return jsonify({'error': 'معرف النادي مطلوب'}), 400
     if not training_date:
         return jsonify({'error': 'تاريخ التدريب مطلوب'}), 400
+    if training_scope not in ['club', 'academy']:
+        return jsonify({'error': 'نوع التدريب يجب أن يكون club أو academy'}), 400
 
     if current_user.role == 'admin' and club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة تدريب لهذا النادي'}), 403
@@ -61,11 +64,21 @@ def create_training():
             return jsonify({'error': 'المجموعة الفرعية غير موجودة'}), 404
         if subgroup.club_id != club_id:
             return jsonify({'error': 'المجموعة الفرعية لا تتبع هذا النادي'}), 400
+        if subgroup.subgroup_type != training_scope:
+            return jsonify({'error': 'نوع المجموعة لا يطابق نوع التدريب'}), 400
     else:
-        # Keep DB compatibility where subgroup may still be non-null by defaulting to first subgroup.
-        fallback_subgroup = Subgroup.query.filter_by(club_id=club_id).order_by(Subgroup.created_at.asc()).first()
+        # Keep DB compatibility where subgroup is required by selecting first subgroup of the same scope.
+        fallback_subgroup = Subgroup.query.filter_by(
+            club_id=club_id,
+            subgroup_type=training_scope,
+        ).filter(Subgroup.birth_year != 0).order_by(Subgroup.created_at.asc()).first()
         if not fallback_subgroup:
-            return jsonify({'error': 'لا توجد مجموعات فرعية في النادي. أضف مجموعة أولاً أو اختر مجموعة.'}), 400
+            fallback_subgroup = Subgroup.query.filter_by(
+                club_id=club_id,
+                subgroup_type=training_scope,
+            ).order_by(Subgroup.created_at.asc()).first()
+        if not fallback_subgroup:
+            return jsonify({'error': 'لا توجد مجموعات بنفس نوع التدريب. أضف مجموعة أولاً أو اختر مجموعة.'}), 400
         subgroup_id = fallback_subgroup.id
 
     try:
@@ -73,6 +86,7 @@ def create_training():
             name=name,
             club_id=club_id,
             subgroup_id=subgroup_id,
+            training_scope=training_scope,
             training_date=datetime.fromisoformat(training_date).date(),
             notes=data.get('notes'),
         )
@@ -82,6 +96,61 @@ def create_training():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'فشل إنشاء التدريب: {str(e)}'}), 500
+
+
+@trainings_bp.route('/<training_id>/attendance', methods=['GET'])
+@login_required
+def get_training_attendance(training_id):
+    """Get all players assigned to this training scope with attended status."""
+    training = Training.query.get(training_id)
+    if not training:
+        return jsonify({'error': 'التدريب غير موجود'}), 404
+
+    current_user = User.query.get(session['user_id'])
+    if current_user.role == 'admin' and training.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'coach' and training.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role not in ['admin', 'coach', 'superadmin']:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+
+    scope = training.training_scope or 'club'
+
+    subgroups = Subgroup.query.filter_by(
+        club_id=training.club_id,
+        subgroup_type=scope,
+    ).filter(Subgroup.birth_year != 0).all()
+
+    subgroup_ids = [s.id for s in subgroups]
+    if subgroup_ids:
+        players = Player.query.filter(
+            Player.club_id == training.club_id,
+            Player.subgroup_id.in_(subgroup_ids),
+        ).order_by(Player.full_name.asc()).all()
+    else:
+        players = []
+
+    attended_rows = db.session.query(CheckIn.player_id).join(
+        CheckInTraining,
+        CheckInTraining.checkin_id == CheckIn.id,
+    ).filter(
+        CheckInTraining.training_id == training.id,
+    ).distinct().all()
+    attended_player_ids = {row[0] for row in attended_rows}
+
+    result_players = []
+    for player in players:
+        result_players.append({
+            'id': player.id,
+            'fullName': player.full_name,
+            'subgroupId': player.subgroup_id,
+            'attended': player.id in attended_player_ids,
+        })
+
+    return jsonify({
+        'training': training.to_dict(),
+        'players': result_players,
+    }), 200
 
 
 @trainings_bp.route('/<training_id>', methods=['DELETE'])

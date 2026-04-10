@@ -81,6 +81,7 @@ class Training(db.Model):
     name = db.Column(db.String(255), nullable=False)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
     subgroup_id = db.Column(db.String(36), db.ForeignKey('subgroups.id'), nullable=False)
+    training_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
     training_date = db.Column(db.Date, nullable=False)
     notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -92,6 +93,7 @@ class Training(db.Model):
             'name': self.name,
             'clubId': self.club_id,
             'subgroupId': self.subgroup_id,
+            'trainingScope': self.training_scope or 'club',
             'trainingDate': self.training_date.isoformat() if self.training_date else None,
             'notes': self.notes,
             'createdAt': self.created_at.isoformat() if self.created_at else None,

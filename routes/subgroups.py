@@ -67,7 +67,7 @@ def create_subgroup():
     if not data.get('subgroupType'):
         return jsonify({'error': 'نوع المجموعة مطلوب (أكاديمية أو نادي)'}), 400
     
-    if not data.get('birthYear'):
+    if data.get('birthYear') is None:
         return jsonify({'error': 'سنة الميلاد مطلوبة'}), 400
     
     # Verify club exists
@@ -75,15 +75,25 @@ def create_subgroup():
     if not club:
         return jsonify({'error': 'النادي غير موجود'}), 404
     
-    # Generate name based on type and year
-    type_name = 'أكاديمية' if data['subgroupType'] == 'academy' else 'نادي'
-    name = data.get('name') or f"{type_name} {data['birthYear']}"
+    try:
+        birth_year = int(data.get('birthYear'))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'سنة الميلاد يجب أن تكون رقمية'}), 400
+
+    # Generate name based on type and year (0 means first team)
+    if birth_year == 0:
+        default_name = 'الفريق الاول'
+    else:
+        type_name = 'أكاديمية' if data['subgroupType'] == 'academy' else 'نادي'
+        default_name = f"{type_name} {birth_year}"
+
+    name = data.get('name') or default_name
     
     subgroup = Subgroup(
         name=name,
         club_id=data['clubId'],
         subgroup_type=data['subgroupType'],
-        birth_year=data['birthYear'],
+        birth_year=birth_year,
         description=data.get('description')
     )
     
@@ -114,7 +124,10 @@ def update_subgroup(subgroup_id):
     if 'subgroupType' in data:
         subgroup.subgroup_type = data['subgroupType']
     if 'birthYear' in data:
-        subgroup.birth_year = data['birthYear']
+        try:
+            subgroup.birth_year = int(data['birthYear'])
+        except (TypeError, ValueError):
+            return jsonify({'error': 'سنة الميلاد يجب أن تكون رقمية'}), 400
     if 'description' in data:
         subgroup.description = data['description']
     

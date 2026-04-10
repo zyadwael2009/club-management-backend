@@ -12,8 +12,11 @@ def _ensure_schema_updates():
     player_payment_columns = {col['name'] for col in inspector.get_columns('player_payments')}
     coach_payment_columns = {col['name'] for col in inspector.get_columns('coach_payments')}
     match_expense_columns = set()
+    training_columns = set()
     if 'match_expenses' in inspector.get_table_names():
         match_expense_columns = {col['name'] for col in inspector.get_columns('match_expenses')}
+    if 'trainings' in inspector.get_table_names():
+        training_columns = {col['name'] for col in inspector.get_columns('trainings')}
 
     statements = []
     if 'due_date' not in columns:
@@ -28,6 +31,8 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE coach_payments ADD COLUMN expense_scope VARCHAR(20) DEFAULT 'club'")
     if 'expense_scope' not in match_expense_columns and 'match_expenses' in inspector.get_table_names():
         statements.append("ALTER TABLE match_expenses ADD COLUMN expense_scope VARCHAR(20) DEFAULT 'club'")
+    if 'training_scope' not in training_columns and 'trainings' in inspector.get_table_names():
+        statements.append("ALTER TABLE trainings ADD COLUMN training_scope VARCHAR(20) DEFAULT 'club'")
 
     for stmt in statements:
         try:
