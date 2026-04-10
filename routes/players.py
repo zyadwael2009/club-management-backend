@@ -146,6 +146,7 @@ def create_player():
             payment_status=data.get('paymentStatus', 'unpaid'),
             amount_due=data.get('amountDue'),
             notes=data.get('notes'),
+            phone_number=data.get('phoneNumber'),
             image_url=data.get('imageUrl'),
             club_id=club_id,
             subgroup_id=data.get('subgroupId'),
@@ -200,6 +201,8 @@ def update_player(player_id):
         player.amount_due = data['amountDue']
     if 'notes' in data:
         player.notes = data['notes']
+    if 'phoneNumber' in data:
+        player.phone_number = data['phoneNumber']
     if 'imageUrl' in data:
         player.image_url = data['imageUrl']
     if 'clubId' in data:

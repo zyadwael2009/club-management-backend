@@ -9,6 +9,7 @@ from sqlalchemy import inspect, text
 def _ensure_schema_updates():
     inspector = inspect(db.engine)
     columns = {col['name'] for col in inspector.get_columns('clubs')}
+    player_columns = {col['name'] for col in inspector.get_columns('players')}
     player_payment_columns = {col['name'] for col in inspector.get_columns('player_payments')}
     coach_payment_columns = {col['name'] for col in inspector.get_columns('coach_payments')}
     match_expense_columns = set()
@@ -27,6 +28,8 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE clubs ADD COLUMN deactivated_at DATETIME")
     if 'revenue_scope' not in player_payment_columns:
         statements.append("ALTER TABLE player_payments ADD COLUMN revenue_scope VARCHAR(20) DEFAULT 'club'")
+    if 'phone_number' not in player_columns:
+        statements.append("ALTER TABLE players ADD COLUMN phone_number VARCHAR(30)")
     if 'expense_scope' not in coach_payment_columns:
         statements.append("ALTER TABLE coach_payments ADD COLUMN expense_scope VARCHAR(20) DEFAULT 'club'")
     if 'expense_scope' not in match_expense_columns and 'match_expenses' in inspector.get_table_names():

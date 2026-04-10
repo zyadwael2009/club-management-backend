@@ -130,13 +130,17 @@ def get_training_attendance(training_id):
     else:
         players = []
 
-    attended_rows = db.session.query(CheckIn.player_id).join(
+    attended_rows = db.session.query(CheckIn.player_id, CheckIn.timestamp).join(
         CheckInTraining,
         CheckInTraining.checkin_id == CheckIn.id,
     ).filter(
         CheckInTraining.training_id == training.id,
-    ).distinct().all()
-    attended_player_ids = {row[0] for row in attended_rows}
+    ).order_by(CheckIn.timestamp.desc()).all()
+
+    latest_checkin_by_player = {}
+    for player_id, timestamp in attended_rows:
+        if player_id not in latest_checkin_by_player:
+            latest_checkin_by_player[player_id] = timestamp
 
     result_players = []
     for player in players:
@@ -144,7 +148,8 @@ def get_training_attendance(training_id):
             'id': player.id,
             'fullName': player.full_name,
             'subgroupId': player.subgroup_id,
-            'attended': player.id in attended_player_ids,
+            'attended': player.id in latest_checkin_by_player,
+            'checkedInAt': latest_checkin_by_player[player.id].isoformat() if player.id in latest_checkin_by_player else None,
         })
 
     return jsonify({

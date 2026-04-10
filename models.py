@@ -156,6 +156,7 @@ class Player(db.Model):
     payment_status = db.Column(db.String(20), default='unpaid')  # 'paid' or 'unpaid'
     amount_due = db.Column(db.Float, nullable=True)  # Amount left to pay
     notes = db.Column(db.Text, nullable=True)
+    phone_number = db.Column(db.String(30), nullable=True)
     image_url = db.Column(db.String(500), nullable=True)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=True)
     subgroup_id = db.Column(db.String(36), db.ForeignKey('subgroups.id'), nullable=True)
@@ -189,6 +190,7 @@ class Player(db.Model):
             'paymentStatus': self.payment_status,
             'amountDue': self.amount_due,
             'notes': self.notes,
+            'phoneNumber': self.phone_number,
             'imageUrl': self.image_url,
             'clubId': self.club_id,
             'subgroupId': self.subgroup_id,
