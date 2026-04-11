@@ -81,7 +81,7 @@ class Training(db.Model):
     name = db.Column(db.String(255), nullable=False)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
     subgroup_id = db.Column(db.String(36), db.ForeignKey('subgroups.id'), nullable=False)
-    training_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
+    training_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy | first_team
     training_date = db.Column(db.Date, nullable=False)
     notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -155,6 +155,9 @@ class Player(db.Model):
     date_of_birth = db.Column(db.Date, nullable=True)
     payment_status = db.Column(db.String(20), default='unpaid')  # 'paid' or 'unpaid'
     amount_due = db.Column(db.Float, nullable=True)  # Amount left to pay
+    monthly_amount = db.Column(db.Float, nullable=True)  # Monthly academy fee
+    renewal_day = db.Column(db.Integer, nullable=True)  # Day of month for auto renewal
+    next_renewal_date = db.Column(db.Date, nullable=True)  # Next scheduled renewal date
     notes = db.Column(db.Text, nullable=True)
     phone_number = db.Column(db.String(30), nullable=True)
     image_url = db.Column(db.String(500), nullable=True)
@@ -189,6 +192,9 @@ class Player(db.Model):
             'dateOfBirth': self.date_of_birth.isoformat() if self.date_of_birth else None,
             'paymentStatus': self.payment_status,
             'amountDue': self.amount_due,
+            'monthlyAmount': self.monthly_amount,
+            'renewalDay': self.renewal_day,
+            'nextRenewalDate': self.next_renewal_date.isoformat() if self.next_renewal_date else None,
             'notes': self.notes,
             'phoneNumber': self.phone_number,
             'imageUrl': self.image_url,

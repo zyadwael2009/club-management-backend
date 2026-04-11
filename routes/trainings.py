@@ -70,8 +70,8 @@ def create_training():
         return jsonify({'error': 'معرف النادي مطلوب'}), 400
     if not training_date:
         return jsonify({'error': 'تاريخ التدريب مطلوب'}), 400
-    if training_scope not in ['club', 'academy']:
-        return jsonify({'error': 'نوع التدريب يجب أن يكون club أو academy'}), 400
+    if training_scope not in ['club', 'academy', 'first_team']:
+        return jsonify({'error': 'نوع التدريب يجب أن يكون club أو academy أو first_team'}), 400
 
     if current_user.role == 'admin' and club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة تدريب لهذا النادي'}), 403
@@ -82,19 +82,29 @@ def create_training():
             return jsonify({'error': 'المجموعة الفرعية غير موجودة'}), 404
         if subgroup.club_id != club_id:
             return jsonify({'error': 'المجموعة الفرعية لا تتبع هذا النادي'}), 400
-        if subgroup.subgroup_type != training_scope:
+        if training_scope == 'first_team':
+            if subgroup.subgroup_type != 'club' or subgroup.birth_year != 0:
+                return jsonify({'error': 'تدريب الفريق الأول يتطلب مجموعة الفريق الأول'}), 400
+        elif subgroup.subgroup_type != training_scope:
             return jsonify({'error': 'نوع المجموعة لا يطابق نوع التدريب'}), 400
     else:
-        # Keep DB compatibility where subgroup is required by selecting first subgroup of the same scope.
-        fallback_subgroup = Subgroup.query.filter_by(
-            club_id=club_id,
-            subgroup_type=training_scope,
-        ).filter(Subgroup.birth_year != 0).order_by(Subgroup.created_at.asc()).first()
-        if not fallback_subgroup:
+        # Keep DB compatibility where subgroup is required by selecting the first valid subgroup.
+        if training_scope == 'first_team':
+            fallback_subgroup = Subgroup.query.filter_by(
+                club_id=club_id,
+                subgroup_type='club',
+                birth_year=0,
+            ).order_by(Subgroup.created_at.asc()).first()
+        else:
             fallback_subgroup = Subgroup.query.filter_by(
                 club_id=club_id,
                 subgroup_type=training_scope,
-            ).order_by(Subgroup.created_at.asc()).first()
+            ).filter(Subgroup.birth_year != 0).order_by(Subgroup.created_at.asc()).first()
+            if not fallback_subgroup:
+                fallback_subgroup = Subgroup.query.filter_by(
+                    club_id=club_id,
+                    subgroup_type=training_scope,
+                ).order_by(Subgroup.created_at.asc()).first()
         if not fallback_subgroup:
             return jsonify({'error': 'لا توجد مجموعات بنفس نوع التدريب. أضف مجموعة أولاً أو اختر مجموعة.'}), 400
         subgroup_id = fallback_subgroup.id
@@ -134,10 +144,17 @@ def get_training_attendance(training_id):
 
     scope = training.training_scope or 'club'
 
-    subgroups = Subgroup.query.filter_by(
-        club_id=training.club_id,
-        subgroup_type=scope,
-    ).filter(Subgroup.birth_year != 0).all()
+    if scope == 'first_team':
+        subgroups = Subgroup.query.filter_by(
+            club_id=training.club_id,
+            subgroup_type='club',
+            birth_year=0,
+        ).all()
+    else:
+        subgroups = Subgroup.query.filter_by(
+            club_id=training.club_id,
+            subgroup_type=scope,
+        ).filter(Subgroup.birth_year != 0).all()
 
     subgroup_ids = [s.id for s in subgroups]
     if subgroup_ids:

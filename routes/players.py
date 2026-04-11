@@ -1,9 +1,39 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, Player, User, Coach
+from models import db, Player, User, Coach, Subgroup
 from routes.auth import login_required, admin_or_superadmin_required
-from datetime import datetime
+from datetime import datetime, date
+import calendar
 
 players_bp = Blueprint('players', __name__)
+
+
+def _add_one_month_keep_day(base_date, day_of_month):
+    year = base_date.year
+    month = base_date.month + 1
+    if month > 12:
+        month = 1
+        year += 1
+    max_day = calendar.monthrange(year, month)[1]
+    return date(year, month, min(day_of_month, max_day))
+
+
+def _apply_player_renewals(player, today=None):
+    if (
+        not player.monthly_amount
+        or player.monthly_amount <= 0
+        or not player.renewal_day
+        or not player.next_renewal_date
+    ):
+        return False
+
+    current_date = today or date.today()
+    updated = False
+    while player.next_renewal_date <= current_date:
+        player.amount_due = (player.amount_due or 0.0) + float(player.monthly_amount)
+        player.payment_status = 'unpaid'
+        player.next_renewal_date = _add_one_month_keep_day(player.next_renewal_date, player.renewal_day)
+        updated = True
+    return updated
 
 
 @players_bp.route('', methods=['GET'])
@@ -37,6 +67,15 @@ def get_players():
         query = query.filter_by(subgroup_id=subgroup_id)
     
     players = query.order_by(Player.created_at.desc()).all()
+
+    changed = False
+    for player in players:
+        if _apply_player_renewals(player):
+            changed = True
+
+    if changed:
+        db.session.commit()
+
     return jsonify([player.to_dict() for player in players])
 
 
@@ -55,7 +94,61 @@ def get_player(player_id):
     elif current_user.role == 'player' and player.id != current_user.player_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     
+    if _apply_player_renewals(player):
+        db.session.commit()
+
     return jsonify(player.to_dict())
+
+
+@players_bp.route('/renewals/today', methods=['GET'])
+@login_required
+def get_today_renewals():
+    """Return academy players that renew today with total renewal amount."""
+    current_user = User.query.get(session['user_id'])
+    club_id = request.args.get('club_id')
+
+    if current_user.role == 'admin':
+        club_id = current_user.club_id
+    elif current_user.role == 'coach':
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    elif current_user.role == 'player':
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    elif current_user.role == 'superadmin' and not club_id:
+        return jsonify({'error': 'معرف النادي مطلوب'}), 400
+
+    today = date.today()
+
+    rows = (
+        db.session.query(Player, Subgroup)
+        .join(Subgroup, Player.subgroup_id == Subgroup.id)
+        .filter(Player.club_id == club_id)
+        .filter(Subgroup.subgroup_type == 'academy')
+        .filter(Player.monthly_amount.isnot(None))
+        .filter(Player.monthly_amount > 0)
+        .filter(Player.renewal_day == today.day)
+        .order_by(Player.full_name.asc())
+        .all()
+    )
+
+    payload = []
+    total = 0.0
+    for player, subgroup in rows:
+        total += float(player.monthly_amount or 0.0)
+        payload.append({
+            'id': player.id,
+            'fullName': player.full_name,
+            'monthlyAmount': float(player.monthly_amount or 0.0),
+            'amountDue': float(player.amount_due or 0.0),
+            'subgroupName': subgroup.name,
+            'renewalDay': player.renewal_day,
+        })
+
+    return jsonify({
+        'renewalDate': today.isoformat(),
+        'playersCount': len(payload),
+        'totalAmount': total,
+        'players': payload,
+    })
 
 
 @players_bp.route('/qr/<qr_code>', methods=['GET'])
@@ -139,17 +232,52 @@ def create_player():
         if not password or len(password) < 4:
             return jsonify({'error': 'كلمة المرور يجب أن تكون 4 أحرف على الأقل'}), 400
     
+    subgroup_id = data.get('subgroupId')
+    subgroup = None
+    if subgroup_id:
+        subgroup = Subgroup.query.get(subgroup_id)
+        if not subgroup:
+            return jsonify({'error': 'المجموعة الفرعية غير موجودة'}), 404
+        if subgroup.club_id != club_id:
+            return jsonify({'error': 'المجموعة الفرعية لا تتبع هذا النادي'}), 400
+
+    is_academy_player = subgroup is not None and subgroup.subgroup_type == 'academy'
+    monthly_amount = data.get('monthlyAmount')
+
+    if is_academy_player:
+        if monthly_amount is None:
+            return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400
+        try:
+            monthly_amount = float(monthly_amount)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'المبلغ الشهري غير صالح'}), 400
+        if monthly_amount <= 0:
+            return jsonify({'error': 'المبلغ الشهري يجب أن يكون أكبر من صفر'}), 400
+
     try:
+        today = date.today()
+        renewal_day = today.day if is_academy_player else None
+        next_renewal_date = _add_one_month_keep_day(today, renewal_day) if is_academy_player else None
+        amount_due = data.get('amountDue')
+        if is_academy_player:
+            amount_due = float(monthly_amount)
+        payment_status = data.get('paymentStatus', 'unpaid')
+        if is_academy_player:
+            payment_status = 'paid' if float(amount_due or 0.0) <= 0 else 'unpaid'
+
         player = Player(
             full_name=data['fullName'],
             date_of_birth=datetime.fromisoformat(data['dateOfBirth']).date() if data.get('dateOfBirth') else None,
-            payment_status=data.get('paymentStatus', 'unpaid'),
-            amount_due=data.get('amountDue'),
+            payment_status=payment_status,
+            amount_due=amount_due,
+            monthly_amount=monthly_amount if is_academy_player else None,
+            renewal_day=renewal_day,
+            next_renewal_date=next_renewal_date,
             notes=data.get('notes'),
             phone_number=data.get('phoneNumber'),
             image_url=data.get('imageUrl'),
             club_id=club_id,
-            subgroup_id=data.get('subgroupId'),
+            subgroup_id=subgroup_id,
             pin=data.get('pin'),
         )
         
@@ -190,6 +318,15 @@ def update_player(player_id):
     
     if not data:
         return jsonify({'error': 'لا توجد بيانات'}), 400
+
+    subgroup_id_for_update = data.get('subgroupId', player.subgroup_id)
+    subgroup_for_update = None
+    if subgroup_id_for_update:
+        subgroup_for_update = Subgroup.query.get(subgroup_id_for_update)
+        if not subgroup_for_update:
+            return jsonify({'error': 'المجموعة الفرعية غير موجودة'}), 404
+
+    is_academy_player = subgroup_for_update is not None and subgroup_for_update.subgroup_type == 'academy'
     
     if 'fullName' in data:
         player.full_name = data['fullName']
@@ -198,7 +335,8 @@ def update_player(player_id):
     if 'paymentStatus' in data:
         player.payment_status = data['paymentStatus']
     if 'amountDue' in data:
-        player.amount_due = data['amountDue']
+        if not is_academy_player:
+            player.amount_due = data['amountDue']
     if 'notes' in data:
         player.notes = data['notes']
     if 'phoneNumber' in data:
@@ -211,6 +349,29 @@ def update_player(player_id):
         player.subgroup_id = data['subgroupId']
     if 'pin' in data:
         player.pin = data['pin']
+
+    if is_academy_player:
+        if 'monthlyAmount' in data:
+            try:
+                monthly_amount = float(data['monthlyAmount'])
+            except (TypeError, ValueError):
+                return jsonify({'error': 'المبلغ الشهري غير صالح'}), 400
+            if monthly_amount <= 0:
+                return jsonify({'error': 'المبلغ الشهري يجب أن يكون أكبر من صفر'}), 400
+            player.monthly_amount = monthly_amount
+
+        if player.monthly_amount is None:
+            return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400
+
+        if player.renewal_day is None:
+            player.renewal_day = date.today().day
+        if player.next_renewal_date is None:
+            player.next_renewal_date = _add_one_month_keep_day(date.today(), player.renewal_day)
+        player.payment_status = 'paid' if float(player.amount_due or 0.0) <= 0 else 'unpaid'
+    else:
+        player.monthly_amount = None
+        player.renewal_day = None
+        player.next_renewal_date = None
     
     player.updated_at = datetime.utcnow()
     db.session.commit()
@@ -270,6 +431,14 @@ def get_stats():
         query = query.filter_by(club_id=club_id)
     
     players = query.all()
+
+    changed = False
+    for p in players:
+        if _apply_player_renewals(p):
+            changed = True
+    if changed:
+        db.session.commit()
+
     total = len(players)
     paid = sum(1 for p in players if p.payment_status == 'paid')
     unpaid = total - paid
