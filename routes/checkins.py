@@ -2,8 +2,19 @@ from flask import Blueprint, request, jsonify, session
 from models import db, CheckIn, Player, User, Training, CheckInTraining
 from routes.auth import login_required
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 checkins_bp = Blueprint('checkins', __name__)
+
+_UTC = ZoneInfo('UTC')
+_EGYPT = ZoneInfo('Africa/Cairo')
+
+
+def _to_egypt_iso(dt):
+    if not dt:
+        return None
+    aware = dt.replace(tzinfo=_UTC) if dt.tzinfo is None else dt.astimezone(_UTC)
+    return aware.astimezone(_EGYPT).isoformat()
 
 
 def _append_training_info(checkins):
@@ -21,6 +32,7 @@ def _append_training_info(checkins):
     payload = []
     for checkin in checkins:
         row = checkin.to_dict()
+        row['timestamp'] = _to_egypt_iso(checkin.timestamp)
         training = training_by_checkin.get(checkin.id)
         if training is not None:
             row['trainingId'] = training.id
@@ -134,6 +146,7 @@ def create_checkin():
     db.session.commit()
 
     response = checkin.to_dict()
+    response['timestamp'] = _to_egypt_iso(checkin.timestamp)
     response['trainingId'] = training.id
     response['trainingName'] = training.name
     return jsonify(response), 201

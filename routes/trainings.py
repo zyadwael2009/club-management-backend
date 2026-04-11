@@ -2,8 +2,26 @@ from flask import Blueprint, request, jsonify, session
 from models import db, Training, Subgroup, User, Player, CheckIn, CheckInTraining
 from routes.auth import login_required, admin_or_superadmin_required
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 trainings_bp = Blueprint('trainings', __name__)
+
+_UTC = ZoneInfo('UTC')
+_EGYPT = ZoneInfo('Africa/Cairo')
+
+
+def _to_egypt_iso(dt):
+    if not dt:
+        return None
+    aware = dt.replace(tzinfo=_UTC) if dt.tzinfo is None else dt.astimezone(_UTC)
+    return aware.astimezone(_EGYPT).isoformat()
+
+
+def _to_egypt_text(dt):
+    if not dt:
+        return None
+    aware = dt.replace(tzinfo=_UTC) if dt.tzinfo is None else dt.astimezone(_UTC)
+    return aware.astimezone(_EGYPT).strftime('%H:%M:%S')
 
 
 @trainings_bp.route('', methods=['GET'])
@@ -149,7 +167,8 @@ def get_training_attendance(training_id):
             'fullName': player.full_name,
             'subgroupId': player.subgroup_id,
             'attended': player.id in latest_checkin_by_player,
-            'checkedInAt': latest_checkin_by_player[player.id].isoformat() if player.id in latest_checkin_by_player else None,
+            'checkedInAt': _to_egypt_iso(latest_checkin_by_player[player.id]) if player.id in latest_checkin_by_player else None,
+            'checkedInAtText': _to_egypt_text(latest_checkin_by_player[player.id]) if player.id in latest_checkin_by_player else None,
         })
 
     return jsonify({
