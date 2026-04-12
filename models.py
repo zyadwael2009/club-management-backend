@@ -53,6 +53,7 @@ class Subgroup(db.Model):
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
     subgroup_type = db.Column(db.String(20), nullable=False)  # 'academy' (أكاديمية) or 'club' (نادي)
     birth_year = db.Column(db.Integer, nullable=False)  # e.g., 2015, 2014
+    monthly_amount = db.Column(db.Float, nullable=True)  # Academy monthly amount for subgroup
     description = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -67,6 +68,7 @@ class Subgroup(db.Model):
             'clubId': self.club_id,
             'subgroupType': self.subgroup_type,
             'birthYear': self.birth_year,
+            'monthlyAmount': self.monthly_amount,
             'description': self.description,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
             'updatedAt': self.updated_at.isoformat() if self.updated_at else None,

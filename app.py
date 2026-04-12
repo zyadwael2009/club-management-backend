@@ -10,6 +10,7 @@ def _ensure_schema_updates():
     inspector = inspect(db.engine)
     columns = {col['name'] for col in inspector.get_columns('clubs')}
     player_columns = {col['name'] for col in inspector.get_columns('players')}
+    subgroup_columns = {col['name'] for col in inspector.get_columns('subgroups')}
     player_payment_columns = {col['name'] for col in inspector.get_columns('player_payments')}
     coach_payment_columns = {col['name'] for col in inspector.get_columns('coach_payments')}
     match_expense_columns = set()
@@ -40,6 +41,8 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE players ADD COLUMN subscription_start_date DATE")
     if 'subscription_end_date' not in player_columns:
         statements.append("ALTER TABLE players ADD COLUMN subscription_end_date DATE")
+    if 'monthly_amount' not in subgroup_columns:
+        statements.append("ALTER TABLE subgroups ADD COLUMN monthly_amount FLOAT")
     if 'expense_scope' not in coach_payment_columns:
         statements.append("ALTER TABLE coach_payments ADD COLUMN expense_scope VARCHAR(20) DEFAULT 'club'")
     if 'expense_scope' not in match_expense_columns and 'match_expenses' in inspector.get_table_names():

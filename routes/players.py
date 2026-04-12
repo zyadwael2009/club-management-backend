@@ -230,17 +230,13 @@ def create_player():
             return jsonify({'error': 'المجموعة الفرعية لا تتبع هذا النادي'}), 400
 
     is_academy_player = subgroup is not None and subgroup.subgroup_type == 'academy'
-    monthly_amount = data.get('monthlyAmount')
+    monthly_amount = subgroup.monthly_amount if is_academy_player else None
     subscription_start = data.get('subscriptionStartDate')
     subscription_end = data.get('subscriptionEndDate')
 
     if is_academy_player:
         if monthly_amount is None:
             return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400
-        try:
-            monthly_amount = float(monthly_amount)
-        except (TypeError, ValueError):
-            return jsonify({'error': 'المبلغ الشهري غير صالح'}), 400
         if monthly_amount <= 0:
             return jsonify({'error': 'المبلغ الشهري يجب أن يكون أكبر من صفر'}), 400
         if not subscription_start or not subscription_end:
@@ -351,14 +347,8 @@ def update_player(player_id):
         player.pin = data['pin']
 
     if is_academy_player:
-        if 'monthlyAmount' in data:
-            try:
-                monthly_amount = float(data['monthlyAmount'])
-            except (TypeError, ValueError):
-                return jsonify({'error': 'المبلغ الشهري غير صالح'}), 400
-            if monthly_amount <= 0:
-                return jsonify({'error': 'المبلغ الشهري يجب أن يكون أكبر من صفر'}), 400
-            player.monthly_amount = monthly_amount
+        if subgroup_for_update is not None:
+            player.monthly_amount = subgroup_for_update.monthly_amount
 
         if player.monthly_amount is None:
             return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400

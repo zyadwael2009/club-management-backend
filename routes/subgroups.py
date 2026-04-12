@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, Subgroup, Club, User
+from models import db, Subgroup, Club, User, Player
 from routes.auth import login_required, admin_or_superadmin_required
 
 subgroups_bp = Blueprint('subgroups', __name__)
@@ -69,6 +69,17 @@ def create_subgroup():
     
     if data.get('birthYear') is None:
         return jsonify({'error': 'سنة الميلاد مطلوبة'}), 400
+
+    monthly_amount = data.get('monthlyAmount')
+    if data.get('subgroupType') == 'academy':
+        if monthly_amount is None:
+            return jsonify({'error': 'المبلغ الشهري مطلوب لمجموعة الأكاديمية'}), 400
+        try:
+            monthly_amount = float(monthly_amount)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'المبلغ الشهري غير صالح'}), 400
+        if monthly_amount <= 0:
+            return jsonify({'error': 'المبلغ الشهري يجب أن يكون أكبر من صفر'}), 400
     
     # Verify club exists
     club = Club.query.get(data['clubId'])
@@ -94,6 +105,7 @@ def create_subgroup():
         club_id=data['clubId'],
         subgroup_type=data['subgroupType'],
         birth_year=birth_year,
+        monthly_amount=monthly_amount if data['subgroupType'] == 'academy' else None,
         description=data.get('description')
     )
     
@@ -130,6 +142,23 @@ def update_subgroup(subgroup_id):
             return jsonify({'error': 'سنة الميلاد يجب أن تكون رقمية'}), 400
     if 'description' in data:
         subgroup.description = data['description']
+
+    if subgroup.subgroup_type == 'academy':
+        if 'monthlyAmount' in data:
+            try:
+                subgroup.monthly_amount = float(data['monthlyAmount']) if data['monthlyAmount'] is not None else None
+            except (TypeError, ValueError):
+                return jsonify({'error': 'المبلغ الشهري غير صالح'}), 400
+        if subgroup.monthly_amount is None or subgroup.monthly_amount <= 0:
+            return jsonify({'error': 'المبلغ الشهري مطلوب لمجموعة الأكاديمية'}), 400
+    else:
+        subgroup.monthly_amount = None
+
+    # Keep players in subgroup aligned with subgroup monthly amount.
+    if subgroup.subgroup_type == 'academy' and subgroup.monthly_amount is not None:
+        players = Player.query.filter_by(subgroup_id=subgroup.id).all()
+        for player in players:
+            player.monthly_amount = subgroup.monthly_amount
     
     db.session.commit()
     return jsonify(subgroup.to_dict())
