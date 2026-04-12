@@ -358,6 +358,16 @@ def update_player(player_id):
         if subscription_end is not None:
             player.subscription_end_date = datetime.fromisoformat(subscription_end).date() if subscription_end else None
 
+        # Backfill legacy academy players created before subscription dates were introduced.
+        if player.subscription_start_date is None:
+            base_start = player.created_at.date() if player.created_at else date.today()
+            player.subscription_start_date = base_start
+        if player.subscription_end_date is None and player.subscription_start_date is not None:
+            player.subscription_end_date = _add_one_month_keep_day(
+                player.subscription_start_date,
+                player.subscription_start_date.day,
+            )
+
         if player.subscription_start_date is None or player.subscription_end_date is None:
             return jsonify({'error': 'تاريخ بداية ونهاية الاشتراك مطلوبان للاعبي الأكاديمية'}), 400
         if player.subscription_end_date <= player.subscription_start_date:
@@ -365,7 +375,8 @@ def update_player(player_id):
 
         player.renewal_day = None
         player.next_renewal_date = None
-        player.payment_status = 'paid' if float(player.amount_due or 0.0) <= 0 else 'unpaid'
+        if 'paymentStatus' not in data:
+            player.payment_status = 'paid' if float(player.amount_due or 0.0) <= 0 else 'unpaid'
     else:
         player.monthly_amount = None
         player.renewal_day = None
