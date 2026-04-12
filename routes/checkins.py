@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, CheckIn, Player, User, Training, CheckInTraining
 from routes.auth import login_required
-from datetime import datetime
+from datetime import datetime, date
 from zoneinfo import ZoneInfo
 
 checkins_bp = Blueprint('checkins', __name__)
@@ -149,6 +149,16 @@ def create_checkin():
 
     if training.club_id != player.club_id:
         return jsonify({'error': 'التدريب لا يتبع نفس نادي اللاعب'}), 400
+
+    subgroup = player.subgroup
+    if subgroup is not None and subgroup.subgroup_type == 'academy':
+        if player.subscription_end_date and player.subscription_end_date < date.today():
+            player.payment_status = 'unpaid'
+            monthly = float(player.monthly_amount or subgroup.monthly_amount or 0.0)
+            if monthly > 0 and float(player.amount_due or 0.0) <= 0:
+                player.amount_due = monthly
+            db.session.commit()
+            return jsonify({'error': 'انتهى اشتراك اللاعب. يرجى التجديد أولاً'}), 400
 
     if not _is_player_allowed_for_training(player, training):
         return jsonify({'error': 'اللاعب غير مسموح له بهذا التدريب حسب نوع المجموعة'}), 400

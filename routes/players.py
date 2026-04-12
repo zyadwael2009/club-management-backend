@@ -18,7 +18,31 @@ def _add_one_month_keep_day(base_date, day_of_month):
 
 
 def _apply_player_renewals(player, today=None):
-    # Renewal is now managed by explicit subscription dates, not auto day-of-month rolling.
+    current_date = today or date.today()
+    subgroup = player.subgroup
+    is_academy = subgroup is not None and subgroup.subgroup_type == 'academy'
+    if not is_academy:
+        return False
+
+    # Keep player monthly amount aligned with academy subgroup.
+    if subgroup.monthly_amount is not None and subgroup.monthly_amount > 0 and player.monthly_amount != subgroup.monthly_amount:
+        player.monthly_amount = subgroup.monthly_amount
+
+    if not player.subscription_end_date:
+        return False
+
+    if player.subscription_end_date < current_date:
+        changed = False
+        if player.payment_status != 'unpaid':
+            player.payment_status = 'unpaid'
+            changed = True
+
+        monthly = float(player.monthly_amount or 0.0)
+        if monthly > 0 and float(player.amount_due or 0.0) <= 0:
+            player.amount_due = monthly
+            changed = True
+        return changed
+
     return False
 
 
