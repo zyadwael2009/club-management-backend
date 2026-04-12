@@ -41,6 +41,28 @@ def _append_training_info(checkins):
     return payload
 
 
+def _is_player_allowed_for_training(player, training):
+    """Validate player subgroup against training scope."""
+    if player.subgroup_id is None:
+        return False
+
+    if training.subgroup_id == player.subgroup_id:
+        return True
+
+    scope = (training.training_scope or 'club').strip().lower()
+    subgroup = player.subgroup
+    if subgroup is None:
+        return False
+
+    if scope == 'academy':
+        return subgroup.subgroup_type == 'academy' and subgroup.birth_year != 0
+    if scope == 'club':
+        return subgroup.subgroup_type == 'club' and subgroup.birth_year != 0
+    if scope == 'first_team':
+        return subgroup.subgroup_type == 'club' and subgroup.birth_year == 0
+    return False
+
+
 @checkins_bp.route('', methods=['GET'])
 @login_required
 def get_checkins():
@@ -127,6 +149,19 @@ def create_checkin():
 
     if training.club_id != player.club_id:
         return jsonify({'error': 'التدريب لا يتبع نفس نادي اللاعب'}), 400
+
+    if not _is_player_allowed_for_training(player, training):
+        return jsonify({'error': 'اللاعب غير مسموح له بهذا التدريب حسب نوع المجموعة'}), 400
+
+    existing_link = db.session.query(CheckInTraining.id).join(
+        CheckIn,
+        CheckIn.id == CheckInTraining.checkin_id,
+    ).filter(
+        CheckIn.player_id == player.id,
+        CheckInTraining.training_id == training.id,
+    ).first()
+    if existing_link:
+        return jsonify({'error': 'تم تسجيل حضور هذا اللاعب لهذا التدريب بالفعل'}), 409
     
     checkin = CheckIn(
         player_id=data['playerId'],

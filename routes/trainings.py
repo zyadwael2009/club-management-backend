@@ -61,7 +61,14 @@ def create_training():
     name = data.get('name')
     club_id = data.get('clubId')
     subgroup_id = data.get('subgroupId')
-    training_scope = (data.get('trainingScope') or 'club').strip().lower()
+    training_scope_raw = (data.get('trainingScope') or 'club').strip().lower()
+    scope_aliases = {
+        'first team': 'first_team',
+        'first-team': 'first_team',
+        'firstteam': 'first_team',
+        'team1': 'first_team',
+    }
+    training_scope = scope_aliases.get(training_scope_raw, training_scope_raw)
     training_date = data.get('trainingDate')
 
     if not name:

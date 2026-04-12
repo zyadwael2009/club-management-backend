@@ -46,12 +46,10 @@ def _recompute_due_after_payment_change(player, delta_revert=0.0, delta_apply=0.
     current_due = float(player.amount_due) if had_due_before else 0.0
     new_due = max(0.0, (current_due + float(delta_revert)) - float(delta_apply))
 
+    player.amount_due = new_due
     if had_due_before or (player.monthly_amount is not None and player.monthly_amount > 0):
-        player.amount_due = new_due
         player.payment_status = 'paid' if new_due <= 0 else 'unpaid'
-    else:
-        # Keep status unchanged when due tracking is not initialized for this player.
-        player.amount_due = None
+    # If due tracking was previously uninitialized, keep the existing status unchanged.
 
 
 @player_payments.route('/<player_id>/payments', methods=['GET'])
