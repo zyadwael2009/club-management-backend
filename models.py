@@ -158,6 +158,8 @@ class Player(db.Model):
     monthly_amount = db.Column(db.Float, nullable=True)  # Monthly academy fee
     renewal_day = db.Column(db.Integer, nullable=True)  # Day of month for auto renewal
     next_renewal_date = db.Column(db.Date, nullable=True)  # Next scheduled renewal date
+    subscription_start_date = db.Column(db.Date, nullable=True)
+    subscription_end_date = db.Column(db.Date, nullable=True)
     notes = db.Column(db.Text, nullable=True)
     phone_number = db.Column(db.String(30), nullable=True)
     image_url = db.Column(db.String(500), nullable=True)
@@ -195,6 +197,8 @@ class Player(db.Model):
             'monthlyAmount': self.monthly_amount,
             'renewalDay': self.renewal_day,
             'nextRenewalDate': self.next_renewal_date.isoformat() if self.next_renewal_date else None,
+            'subscriptionStartDate': self.subscription_start_date.isoformat() if self.subscription_start_date else None,
+            'subscriptionEndDate': self.subscription_end_date.isoformat() if self.subscription_end_date else None,
             'notes': self.notes,
             'phoneNumber': self.phone_number,
             'imageUrl': self.image_url,

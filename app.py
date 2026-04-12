@@ -36,6 +36,10 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE players ADD COLUMN renewal_day INTEGER")
     if 'next_renewal_date' not in player_columns:
         statements.append("ALTER TABLE players ADD COLUMN next_renewal_date DATE")
+    if 'subscription_start_date' not in player_columns:
+        statements.append("ALTER TABLE players ADD COLUMN subscription_start_date DATE")
+    if 'subscription_end_date' not in player_columns:
+        statements.append("ALTER TABLE players ADD COLUMN subscription_end_date DATE")
     if 'expense_scope' not in coach_payment_columns:
         statements.append("ALTER TABLE coach_payments ADD COLUMN expense_scope VARCHAR(20) DEFAULT 'club'")
     if 'expense_scope' not in match_expense_columns and 'match_expenses' in inspector.get_table_names():

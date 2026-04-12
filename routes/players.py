@@ -18,22 +18,8 @@ def _add_one_month_keep_day(base_date, day_of_month):
 
 
 def _apply_player_renewals(player, today=None):
-    if (
-        not player.monthly_amount
-        or player.monthly_amount <= 0
-        or not player.renewal_day
-        or not player.next_renewal_date
-    ):
-        return False
-
-    current_date = today or date.today()
-    updated = False
-    while player.next_renewal_date <= current_date:
-        player.amount_due = (player.amount_due or 0.0) + float(player.monthly_amount)
-        player.payment_status = 'unpaid'
-        player.next_renewal_date = _add_one_month_keep_day(player.next_renewal_date, player.renewal_day)
-        updated = True
-    return updated
+    # Renewal is now managed by explicit subscription dates, not auto day-of-month rolling.
+    return False
 
 
 @players_bp.route('', methods=['GET'])
@@ -125,7 +111,7 @@ def get_today_renewals():
         .filter(Subgroup.subgroup_type == 'academy')
         .filter(Player.monthly_amount.isnot(None))
         .filter(Player.monthly_amount > 0)
-        .filter(Player.renewal_day == today.day)
+        .filter(Player.subscription_end_date == today)
         .order_by(Player.full_name.asc())
         .all()
     )
@@ -141,6 +127,8 @@ def get_today_renewals():
             'amountDue': float(player.amount_due or 0.0),
             'subgroupName': subgroup.name,
             'renewalDay': player.renewal_day,
+            'subscriptionStartDate': player.subscription_start_date.isoformat() if player.subscription_start_date else None,
+            'subscriptionEndDate': player.subscription_end_date.isoformat() if player.subscription_end_date else None,
         })
 
     return jsonify({
@@ -243,6 +231,8 @@ def create_player():
 
     is_academy_player = subgroup is not None and subgroup.subgroup_type == 'academy'
     monthly_amount = data.get('monthlyAmount')
+    subscription_start = data.get('subscriptionStartDate')
+    subscription_end = data.get('subscriptionEndDate')
 
     if is_academy_player:
         if monthly_amount is None:
@@ -253,11 +243,17 @@ def create_player():
             return jsonify({'error': 'المبلغ الشهري غير صالح'}), 400
         if monthly_amount <= 0:
             return jsonify({'error': 'المبلغ الشهري يجب أن يكون أكبر من صفر'}), 400
+        if not subscription_start or not subscription_end:
+            return jsonify({'error': 'تاريخ بداية ونهاية الاشتراك مطلوبان للاعبي الأكاديمية'}), 400
 
     try:
-        today = date.today()
-        renewal_day = today.day if is_academy_player else None
-        next_renewal_date = _add_one_month_keep_day(today, renewal_day) if is_academy_player else None
+        subscription_start_date = datetime.fromisoformat(subscription_start).date() if (is_academy_player and subscription_start) else None
+        subscription_end_date = datetime.fromisoformat(subscription_end).date() if (is_academy_player and subscription_end) else None
+        if is_academy_player and subscription_start_date and subscription_end_date and subscription_end_date <= subscription_start_date:
+            return jsonify({'error': 'نهاية الاشتراك يجب أن تكون بعد البداية'}), 400
+
+        renewal_day = None
+        next_renewal_date = None
         amount_due = data.get('amountDue')
         if is_academy_player:
             amount_due = float(monthly_amount)
@@ -273,6 +269,8 @@ def create_player():
             monthly_amount=monthly_amount if is_academy_player else None,
             renewal_day=renewal_day,
             next_renewal_date=next_renewal_date,
+            subscription_start_date=subscription_start_date,
+            subscription_end_date=subscription_end_date,
             notes=data.get('notes'),
             phone_number=data.get('phoneNumber'),
             image_url=data.get('imageUrl'),
@@ -327,6 +325,8 @@ def update_player(player_id):
             return jsonify({'error': 'المجموعة الفرعية غير موجودة'}), 404
 
     is_academy_player = subgroup_for_update is not None and subgroup_for_update.subgroup_type == 'academy'
+    subscription_start = data.get('subscriptionStartDate')
+    subscription_end = data.get('subscriptionEndDate')
     
     if 'fullName' in data:
         player.full_name = data['fullName']
@@ -363,15 +363,25 @@ def update_player(player_id):
         if player.monthly_amount is None:
             return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400
 
-        if player.renewal_day is None:
-            player.renewal_day = date.today().day
-        if player.next_renewal_date is None:
-            player.next_renewal_date = _add_one_month_keep_day(date.today(), player.renewal_day)
+        if subscription_start is not None:
+            player.subscription_start_date = datetime.fromisoformat(subscription_start).date() if subscription_start else None
+        if subscription_end is not None:
+            player.subscription_end_date = datetime.fromisoformat(subscription_end).date() if subscription_end else None
+
+        if player.subscription_start_date is None or player.subscription_end_date is None:
+            return jsonify({'error': 'تاريخ بداية ونهاية الاشتراك مطلوبان للاعبي الأكاديمية'}), 400
+        if player.subscription_end_date <= player.subscription_start_date:
+            return jsonify({'error': 'نهاية الاشتراك يجب أن تكون بعد البداية'}), 400
+
+        player.renewal_day = None
+        player.next_renewal_date = None
         player.payment_status = 'paid' if float(player.amount_due or 0.0) <= 0 else 'unpaid'
     else:
         player.monthly_amount = None
         player.renewal_day = None
         player.next_renewal_date = None
+        player.subscription_start_date = None
+        player.subscription_end_date = None
     
     player.updated_at = datetime.utcnow()
     db.session.commit()

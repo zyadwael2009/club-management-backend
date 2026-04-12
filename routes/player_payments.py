@@ -18,22 +18,20 @@ def _add_one_month_keep_day(base_date, day_of_month):
 
 
 def _apply_player_renewals(player, today=None):
-    if (
-        not player.monthly_amount
-        or player.monthly_amount <= 0
-        or not player.renewal_day
-        or not player.next_renewal_date
-    ):
-        return False
+    # Renewal is now managed by explicit subscription dates, not auto day-of-month rolling.
+    return False
 
-    current_date = today or date.today()
-    updated = False
-    while player.next_renewal_date <= current_date:
-        player.amount_due = (player.amount_due or 0.0) + float(player.monthly_amount)
-        player.payment_status = 'unpaid'
-        player.next_renewal_date = _add_one_month_keep_day(player.next_renewal_date, player.renewal_day)
-        updated = True
-    return updated
+
+def _reset_subscription_after_full_payment(player, paid_date):
+    if not player.monthly_amount or player.monthly_amount <= 0:
+        return
+    if player.amount_due is None or player.amount_due > 0:
+        return
+
+    start_date = paid_date
+    end_date = _add_one_month_keep_day(start_date, start_date.day)
+    player.subscription_start_date = start_date
+    player.subscription_end_date = end_date
 
 
 def _recompute_due_after_payment_change(player, delta_revert=0.0, delta_apply=0.0):
@@ -143,6 +141,7 @@ def add_player_payment(player_id):
 
         # Keep player due amount in sync with recorded payments.
         _recompute_due_after_payment_change(player, delta_revert=0.0, delta_apply=amount_paid)
+        _reset_subscription_after_full_payment(player, payment.payment_date)
 
         db.session.add(payment)
         db.session.commit()
@@ -258,6 +257,7 @@ def update_player_payment(player_id, payment_id):
 
         # Undo old payment effect then apply updated one.
         _recompute_due_after_payment_change(player, delta_revert=old_amount, delta_apply=new_amount)
+        _reset_subscription_after_full_payment(player, payment.payment_date)
 
         db.session.commit()
         return jsonify(payment.to_dict()), 200
