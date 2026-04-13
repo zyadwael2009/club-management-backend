@@ -68,6 +68,10 @@ def create_club():
         due_date = None
         if data.get('dueDate'):
             due_date = datetime.fromisoformat(data['dueDate']).date()
+        monthly_amount = data.get('monthlyAmount')
+        monthly_amount = float(monthly_amount) if monthly_amount not in [None, ''] else None
+        if monthly_amount is not None and monthly_amount < 0:
+            return jsonify({'error': 'القسط الشهري للنادي لا يمكن أن يكون سالباً'}), 400
 
         # Create club
         club = Club(
@@ -76,6 +80,7 @@ def create_club():
             secondary_color=data.get('secondaryColor', '#FFC107'),
             logo_url=data.get('logoUrl'),
             due_date=due_date,
+            monthly_amount=monthly_amount,
             is_active=True,
             deactivated_at=None,
         )
@@ -123,6 +128,15 @@ def update_club(club_id):
         club.logo_url = data['logoUrl']
     if 'dueDate' in data:
         club.due_date = datetime.fromisoformat(data['dueDate']).date() if data['dueDate'] else None
+    if 'monthlyAmount' in data:
+        monthly_amount = data['monthlyAmount']
+        if monthly_amount in ['', None]:
+            club.monthly_amount = None
+        else:
+            monthly_amount = float(monthly_amount)
+            if monthly_amount < 0:
+                return jsonify({'error': 'القسط الشهري للنادي لا يمكن أن يكون سالباً'}), 400
+            club.monthly_amount = monthly_amount
     if 'isActive' in data:
         club.is_active = bool(data['isActive'])
         if club.is_active:

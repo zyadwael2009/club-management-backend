@@ -27,8 +27,12 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE clubs ADD COLUMN is_active BOOLEAN DEFAULT 1")
     if 'deactivated_at' not in columns:
         statements.append("ALTER TABLE clubs ADD COLUMN deactivated_at DATETIME")
+    if 'monthly_amount' not in columns:
+        statements.append("ALTER TABLE clubs ADD COLUMN monthly_amount FLOAT")
     if 'revenue_scope' not in player_payment_columns:
         statements.append("ALTER TABLE player_payments ADD COLUMN revenue_scope VARCHAR(20) DEFAULT 'club'")
+    if 'payment_type' not in player_payment_columns:
+        statements.append("ALTER TABLE player_payments ADD COLUMN payment_type VARCHAR(30)")
     if 'phone_number' not in player_columns:
         statements.append("ALTER TABLE players ADD COLUMN phone_number VARCHAR(30)")
     if 'monthly_amount' not in player_columns:

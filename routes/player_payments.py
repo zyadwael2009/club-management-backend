@@ -34,6 +34,21 @@ def _reset_subscription_after_full_payment(player, paid_date):
     player.subscription_end_date = end_date
 
 
+def _initialize_club_monthly_subscription(player):
+    club_monthly = float(player.club.monthly_amount or 0.0) if player.club else 0.0
+    if club_monthly <= 0:
+        raise ValueError('المبلغ الشهري للنادي غير مُعد. قم بتحديده في إعدادات النادي أولاً')
+
+    player.monthly_amount = club_monthly
+    if player.amount_due is None or float(player.amount_due) <= 0:
+        player.amount_due = club_monthly
+
+    if player.subscription_start_date is None:
+        base = date.today()
+        player.subscription_start_date = base
+        player.subscription_end_date = _add_one_month_keep_day(base, base.day)
+
+
 def _recompute_due_after_payment_change(player, delta_revert=0.0, delta_apply=0.0):
     """Recompute player's due amount and payment status safely.
 
@@ -96,6 +111,8 @@ def get_club_player_payments(club_id):
         item = payment.to_dict()
         item['playerName'] = player.full_name
         item['clubId'] = player.club_id
+        item['playerSubgroupType'] = player.subgroup.subgroup_type if player.subgroup else 'club'
+        item['playerSubgroupName'] = player.subgroup.name if player.subgroup else None
         result.append(item)
 
     return jsonify(result), 200
@@ -127,14 +144,28 @@ def add_player_payment(player_id):
 
         _apply_player_renewals(player)
 
-        revenue_scope = data.get('revenueScope', 'club')
-        if revenue_scope not in ['club', 'academy']:
+        subgroup_type = (player.subgroup.subgroup_type if player.subgroup else 'club') or 'club'
+        forced_scope = 'academy' if subgroup_type == 'academy' else 'club'
+
+        requested_scope = data.get('revenueScope', forced_scope)
+        revenue_scope = forced_scope
+        if requested_scope not in ['club', 'academy']:
             return jsonify({'error': 'نوع الإيراد يجب أن يكون club أو academy'}), 400
+
+        payment_type = data.get('paymentType')
+        if subgroup_type == 'club':
+            if payment_type not in ['league_subscription', 'monthly_subscription']:
+                payment_type = 'league_subscription'
+            if payment_type == 'monthly_subscription':
+                _initialize_club_monthly_subscription(player)
+        else:
+            payment_type = 'monthly_subscription'
 
         payment = PlayerPayment(
             player_id=player_id,
             amount_paid=amount_paid,
             revenue_scope=revenue_scope,
+            payment_type=payment_type,
             payment_date=datetime.fromisoformat(data['paymentDate'].replace('Z', '+00:00')).date(),
             notes=data.get('notes')
         )
@@ -243,15 +274,29 @@ def update_player_payment(player_id, payment_id):
         if new_amount <= 0:
             return jsonify({'error': 'المبلغ يجب أن يكون أكبر من صفر'}), 400
 
-        revenue_scope = data.get('revenueScope', payment.revenue_scope or 'club')
-        if revenue_scope not in ['club', 'academy']:
+        subgroup_type = (player.subgroup.subgroup_type if player.subgroup else 'club') or 'club'
+        forced_scope = 'academy' if subgroup_type == 'academy' else 'club'
+
+        requested_scope = data.get('revenueScope', payment.revenue_scope or forced_scope)
+        revenue_scope = forced_scope
+        if requested_scope not in ['club', 'academy']:
             return jsonify({'error': 'نوع الإيراد يجب أن يكون club أو academy'}), 400
+
+        new_payment_type = data.get('paymentType', payment.payment_type)
+        if subgroup_type == 'club':
+            if new_payment_type not in ['league_subscription', 'monthly_subscription']:
+                new_payment_type = 'league_subscription'
+            if new_payment_type == 'monthly_subscription':
+                _initialize_club_monthly_subscription(player)
+        else:
+            new_payment_type = 'monthly_subscription'
 
         _apply_player_renewals(player)
 
         old_amount = float(payment.amount_paid)
         payment.amount_paid = new_amount
         payment.revenue_scope = revenue_scope
+        payment.payment_type = new_payment_type
         payment.payment_date = datetime.fromisoformat(data['paymentDate'].replace('Z', '+00:00')).date()
         payment.notes = data.get('notes')
 

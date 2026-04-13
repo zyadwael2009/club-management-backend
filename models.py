@@ -18,6 +18,7 @@ class Club(db.Model):
     secondary_color = db.Column(db.String(7), default='#FFC107')
     logo_url = db.Column(db.String(500), nullable=True)
     due_date = db.Column(db.Date, nullable=True)
+    monthly_amount = db.Column(db.Float, nullable=True)
     is_active = db.Column(db.Boolean, default=True)
     deactivated_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -37,6 +38,7 @@ class Club(db.Model):
             'secondaryColor': self.secondary_color,
             'logoUrl': self.logo_url,
             'dueDate': self.due_date.isoformat() if self.due_date else None,
+            'monthlyAmount': self.monthly_amount,
             'isActive': self.is_active,
             'deactivatedAt': self.deactivated_at.isoformat() if self.deactivated_at else None,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
@@ -206,6 +208,8 @@ class Player(db.Model):
             'imageUrl': self.image_url,
             'clubId': self.club_id,
             'subgroupId': self.subgroup_id,
+            'subgroupName': self.subgroup.name if self.subgroup else None,
+            'subgroupType': self.subgroup.subgroup_type if self.subgroup else None,
             'pin': self.pin,
             'qrCode': self.qr_code,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
@@ -402,6 +406,7 @@ class PlayerPayment(db.Model):
     player_id = db.Column(db.String(36), db.ForeignKey('players.id'), nullable=False)
     amount_paid = db.Column(db.Float, nullable=False)  # Amount received FROM player
     revenue_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
+    payment_type = db.Column(db.String(30), nullable=True)  # league_subscription | monthly_subscription
     payment_date = db.Column(db.Date, nullable=False)
     notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -412,6 +417,7 @@ class PlayerPayment(db.Model):
             'playerId': self.player_id,
             'amountPaid': self.amount_paid,
             'revenueScope': self.revenue_scope,
+            'paymentType': self.payment_type,
             'paymentDate': self.payment_date.isoformat() if self.payment_date else None,
             'notes': self.notes,
             'createdAt': self.created_at.isoformat() if self.created_at else None,

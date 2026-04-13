@@ -1,13 +1,20 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, CheckIn, Player, User, Training, CheckInTraining
 from routes.auth import login_required
-from datetime import datetime, date
-from zoneinfo import ZoneInfo
+from datetime import datetime, date, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 checkins_bp = Blueprint('checkins', __name__)
 
-_UTC = ZoneInfo('UTC')
-_EGYPT = ZoneInfo('Africa/Cairo')
+def _safe_zoneinfo(key, fallback):
+    try:
+        return ZoneInfo(key)
+    except ZoneInfoNotFoundError:
+        return fallback
+
+
+_UTC = _safe_zoneinfo('UTC', timezone.utc)
+_EGYPT = _safe_zoneinfo('Africa/Cairo', timezone.utc)
 
 
 def _to_egypt_iso(dt):

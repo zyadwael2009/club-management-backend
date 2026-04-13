@@ -402,11 +402,9 @@ def update_player(player_id):
         if 'paymentStatus' not in data:
             player.payment_status = 'paid' if float(player.amount_due or 0.0) <= 0 else 'unpaid'
     else:
-        player.monthly_amount = None
         player.renewal_day = None
         player.next_renewal_date = None
-        player.subscription_start_date = None
-        player.subscription_end_date = None
+        # Keep monthly/subscription fields for club monthly-subscription players.
     
     player.updated_at = datetime.utcnow()
     db.session.commit()
