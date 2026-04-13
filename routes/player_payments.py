@@ -253,6 +253,7 @@ def get_player_payment_summary(player_id):
 
     monthly_total = 0.0
     league_total = 0.0
+    monthly_payment_count = 0
     academy_monthly_count = 0
     for payment in payments:
         payment_type = payment.payment_type
@@ -261,6 +262,7 @@ def get_player_payment_summary(player_id):
 
         if payment_type == 'monthly_subscription':
             monthly_total += float(payment.amount_paid or 0.0)
+            monthly_payment_count += 1
             if payment.revenue_scope == 'academy':
                 academy_monthly_count += 1
         elif payment_type == 'league_subscription':
@@ -274,6 +276,7 @@ def get_player_payment_summary(player_id):
         'totalPaid': total_paid,
         'monthlySubscriptionTotal': monthly_total,
         'leagueSubscriptionTotal': league_total,
+        'monthlyPaymentCount': monthly_payment_count,
         'academyMonthlyPaymentCount': academy_monthly_count,
         'amountDue': amount_due,
         'outstandingBalance': outstanding_balance,
