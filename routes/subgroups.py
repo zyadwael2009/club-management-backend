@@ -71,15 +71,18 @@ def create_subgroup():
         return jsonify({'error': 'سنة الميلاد مطلوبة'}), 400
 
     monthly_amount = data.get('monthlyAmount')
-    if data.get('subgroupType') == 'academy':
-        if monthly_amount is None:
-            return jsonify({'error': 'المبلغ الشهري مطلوب لمجموعة الأكاديمية'}), 400
+    if monthly_amount not in [None, '']:
         try:
             monthly_amount = float(monthly_amount)
         except (TypeError, ValueError):
             return jsonify({'error': 'المبلغ الشهري غير صالح'}), 400
         if monthly_amount <= 0:
             return jsonify({'error': 'المبلغ الشهري يجب أن يكون أكبر من صفر'}), 400
+    else:
+        monthly_amount = None
+
+    if data.get('subgroupType') == 'academy' and monthly_amount is None:
+        return jsonify({'error': 'المبلغ الشهري مطلوب لمجموعة الأكاديمية'}), 400
     
     # Verify club exists
     club = Club.query.get(data['clubId'])
@@ -105,7 +108,7 @@ def create_subgroup():
         club_id=data['clubId'],
         subgroup_type=data['subgroupType'],
         birth_year=birth_year,
-        monthly_amount=monthly_amount if data['subgroupType'] == 'academy' else None,
+        monthly_amount=monthly_amount,
         description=data.get('description')
     )
     
@@ -143,16 +146,19 @@ def update_subgroup(subgroup_id):
     if 'description' in data:
         subgroup.description = data['description']
 
-    if subgroup.subgroup_type == 'academy':
-        if 'monthlyAmount' in data:
+    if 'monthlyAmount' in data:
+        if data['monthlyAmount'] in ['', None]:
+            subgroup.monthly_amount = None
+        else:
             try:
-                subgroup.monthly_amount = float(data['monthlyAmount']) if data['monthlyAmount'] is not None else None
+                subgroup.monthly_amount = float(data['monthlyAmount'])
             except (TypeError, ValueError):
                 return jsonify({'error': 'المبلغ الشهري غير صالح'}), 400
-        if subgroup.monthly_amount is None or subgroup.monthly_amount <= 0:
-            return jsonify({'error': 'المبلغ الشهري مطلوب لمجموعة الأكاديمية'}), 400
-    else:
-        subgroup.monthly_amount = None
+            if subgroup.monthly_amount <= 0:
+                return jsonify({'error': 'المبلغ الشهري يجب أن يكون أكبر من صفر'}), 400
+
+    if subgroup.subgroup_type == 'academy' and (subgroup.monthly_amount is None or subgroup.monthly_amount <= 0):
+        return jsonify({'error': 'المبلغ الشهري مطلوب لمجموعة الأكاديمية'}), 400
 
     # Keep players in subgroup aligned with subgroup monthly amount.
     if subgroup.subgroup_type == 'academy' and subgroup.monthly_amount is not None:

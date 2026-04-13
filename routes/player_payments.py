@@ -35,13 +35,15 @@ def _reset_subscription_after_full_payment(player, paid_date):
 
 
 def _initialize_club_monthly_subscription(player):
+    subgroup_monthly = float(player.subgroup.monthly_amount or 0.0) if player.subgroup else 0.0
     club_monthly = float(player.club.monthly_amount or 0.0) if player.club else 0.0
-    if club_monthly <= 0:
-        raise ValueError('المبلغ الشهري للنادي غير مُعد. قم بتحديده في إعدادات النادي أولاً')
+    resolved_monthly = subgroup_monthly if subgroup_monthly > 0 else club_monthly
+    if resolved_monthly <= 0:
+        raise ValueError('المبلغ الشهري غير مُعد. قم بتحديده في المجموعة أو إعدادات النادي أولاً')
 
-    player.monthly_amount = club_monthly
+    player.monthly_amount = resolved_monthly
     if player.amount_due is None or float(player.amount_due) <= 0:
-        player.amount_due = club_monthly
+        player.amount_due = resolved_monthly
 
     if player.subscription_start_date is None:
         base = date.today()
