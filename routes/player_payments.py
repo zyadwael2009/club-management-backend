@@ -144,6 +144,8 @@ def add_player_payment(player_id):
         if amount_paid <= 0:
             return jsonify({'error': 'المبلغ يجب أن يكون أكبر من صفر'}), 400
 
+        payment_date = datetime.fromisoformat(data['paymentDate'].replace('Z', '+00:00')).date()
+
         _apply_player_renewals(player)
 
         subgroup_type = (player.subgroup.subgroup_type if player.subgroup else 'club') or 'club'
@@ -176,12 +178,18 @@ def add_player_payment(player_id):
                     'error': 'لا يمكن إضافة اشتراك شهري جديد قبل تسوية المستحق الحالي. عدّل الإيراد السابق ليطابق القسط الشهري'
                 }), 400
 
+            # Block creating a new monthly subscription payment while current period is still active.
+            if player.subscription_end_date is not None and payment_date <= player.subscription_end_date and current_due <= 0:
+                return jsonify({
+                    'error': 'لا يمكن إضافة اشتراك شهري جديد قبل انتهاء فترة الاشتراك الحالية'
+                }), 400
+
         payment = PlayerPayment(
             player_id=player_id,
             amount_paid=amount_paid,
             revenue_scope=revenue_scope,
             payment_type=payment_type,
-            payment_date=datetime.fromisoformat(data['paymentDate'].replace('Z', '+00:00')).date(),
+            payment_date=payment_date,
             notes=data.get('notes')
         )
 
