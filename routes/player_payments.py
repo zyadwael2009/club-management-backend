@@ -163,6 +163,19 @@ def add_player_payment(player_id):
         else:
             payment_type = 'monthly_subscription'
 
+        if payment_type == 'monthly_subscription':
+            monthly_entries_count = (
+                PlayerPayment.query
+                .filter_by(player_id=player_id)
+                .filter(PlayerPayment.payment_type == 'monthly_subscription')
+                .count()
+            )
+            current_due = float(player.amount_due or 0.0)
+            if monthly_entries_count > 0 and current_due > 0:
+                return jsonify({
+                    'error': 'لا يمكن إضافة اشتراك شهري جديد قبل تسوية المستحق الحالي. عدّل الإيراد السابق ليطابق القسط الشهري'
+                }), 400
+
         payment = PlayerPayment(
             player_id=player_id,
             amount_paid=amount_paid,
@@ -234,9 +247,24 @@ def get_player_payment_summary(player_id):
     if _apply_player_renewals(player):
         db.session.commit()
 
-    # Calculate total paid
+    # Calculate total paid and typed totals.
     payments = PlayerPayment.query.filter_by(player_id=player_id).all()
     total_paid = sum(payment.amount_paid for payment in payments)
+
+    monthly_total = 0.0
+    league_total = 0.0
+    academy_monthly_count = 0
+    for payment in payments:
+        payment_type = payment.payment_type
+        if payment_type is None:
+            payment_type = 'monthly_subscription' if payment.revenue_scope == 'academy' else 'league_subscription'
+
+        if payment_type == 'monthly_subscription':
+            monthly_total += float(payment.amount_paid or 0.0)
+            if payment.revenue_scope == 'academy':
+                academy_monthly_count += 1
+        elif payment_type == 'league_subscription':
+            league_total += float(payment.amount_paid or 0.0)
     
     # amount_due is stored as the remaining balance in player profile.
     amount_due = player.amount_due or 0
@@ -244,6 +272,9 @@ def get_player_payment_summary(player_id):
     
     return jsonify({
         'totalPaid': total_paid,
+        'monthlySubscriptionTotal': monthly_total,
+        'leagueSubscriptionTotal': league_total,
+        'academyMonthlyPaymentCount': academy_monthly_count,
         'amountDue': amount_due,
         'outstandingBalance': outstanding_balance,
         'paymentCount': len(payments)
