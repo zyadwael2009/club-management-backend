@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, Player, User, Coach, Subgroup
+from models import db, Player, User, Coach, Subgroup, Club
 from routes.auth import login_required, admin_or_superadmin_required
 from datetime import datetime, date
 import calendar
@@ -17,33 +17,52 @@ def _add_one_month_keep_day(base_date, day_of_month):
     return date(year, month, min(day_of_month, max_day))
 
 
+def _resolve_monthly_amount(subgroup, club, current_player_monthly=None):
+    subgroup_monthly = float(subgroup.monthly_amount or 0.0) if subgroup else 0.0
+    club_monthly = float(club.monthly_amount or 0.0) if club else 0.0
+    current_monthly = float(current_player_monthly or 0.0)
+    if subgroup_monthly > 0:
+        return subgroup_monthly
+    if club_monthly > 0:
+        return club_monthly
+    if current_monthly > 0:
+        return current_monthly
+    return 0.0
+
+
 def _apply_player_renewals(player, today=None):
     current_date = today or date.today()
     subgroup = player.subgroup
-    is_academy = subgroup is not None and subgroup.subgroup_type == 'academy'
-    if not is_academy:
+    club = player.club
+    resolved_monthly = _resolve_monthly_amount(subgroup, club, player.monthly_amount)
+    if resolved_monthly <= 0:
         return False
 
-    # Keep player monthly amount aligned with academy subgroup.
-    if subgroup.monthly_amount is not None and subgroup.monthly_amount > 0 and player.monthly_amount != subgroup.monthly_amount:
-        player.monthly_amount = subgroup.monthly_amount
+    changed = False
+
+    # Keep player monthly amount aligned with subgroup/club monthly settings.
+    if float(player.monthly_amount or 0.0) != resolved_monthly:
+        player.monthly_amount = resolved_monthly
+        changed = True
 
     if not player.subscription_end_date:
-        return False
+        base_start = player.subscription_start_date or (player.created_at.date() if player.created_at else current_date)
+        player.subscription_start_date = base_start
+        player.subscription_end_date = _add_one_month_keep_day(base_start, base_start.day)
+        changed = True
+        return changed
 
     if player.subscription_end_date < current_date:
-        changed = False
         if player.payment_status != 'unpaid':
             player.payment_status = 'unpaid'
             changed = True
 
-        monthly = float(player.monthly_amount or 0.0)
-        if monthly > 0 and float(player.amount_due or 0.0) <= 0:
-            player.amount_due = monthly
+        if float(player.amount_due or 0.0) <= 0:
+            player.amount_due = resolved_monthly
             changed = True
         return changed
 
-    return False
+    return changed
 
 
 @players_bp.route('', methods=['GET'])
@@ -245,6 +264,10 @@ def create_player():
             return jsonify({'error': 'كلمة المرور يجب أن تكون 4 أحرف على الأقل'}), 400
     
     subgroup_id = data.get('subgroupId')
+    club = Club.query.get(club_id) if club_id else None
+    if club_id and not club:
+        return jsonify({'error': 'النادي غير موجود'}), 404
+
     subgroup = None
     if subgroup_id:
         subgroup = Subgroup.query.get(subgroup_id)
@@ -254,31 +277,40 @@ def create_player():
             return jsonify({'error': 'المجموعة الفرعية لا تتبع هذا النادي'}), 400
 
     is_academy_player = subgroup is not None and subgroup.subgroup_type == 'academy'
-    monthly_amount = subgroup.monthly_amount if is_academy_player else None
+    monthly_amount = _resolve_monthly_amount(subgroup, club)
+    is_monthly_player = monthly_amount > 0
     subscription_start = data.get('subscriptionStartDate')
     subscription_end = data.get('subscriptionEndDate')
 
-    if is_academy_player:
-        if monthly_amount is None:
+    if is_academy_player and not is_monthly_player:
+        return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400
+
+    if is_monthly_player:
+        if monthly_amount is None or monthly_amount <= 0:
             return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400
-        if monthly_amount <= 0:
-            return jsonify({'error': 'المبلغ الشهري يجب أن يكون أكبر من صفر'}), 400
-        if not subscription_start or not subscription_end:
-            return jsonify({'error': 'تاريخ بداية ونهاية الاشتراك مطلوبان للاعبي الأكاديمية'}), 400
 
     try:
-        subscription_start_date = datetime.fromisoformat(subscription_start).date() if (is_academy_player and subscription_start) else None
-        subscription_end_date = datetime.fromisoformat(subscription_end).date() if (is_academy_player and subscription_end) else None
-        if is_academy_player and subscription_start_date and subscription_end_date and subscription_end_date <= subscription_start_date:
+        subscription_start_date = datetime.fromisoformat(subscription_start).date() if (is_monthly_player and subscription_start) else None
+        subscription_end_date = datetime.fromisoformat(subscription_end).date() if (is_monthly_player and subscription_end) else None
+
+        if is_monthly_player and subscription_start_date is None:
+            subscription_start_date = date.today()
+        if is_monthly_player and subscription_end_date is None and subscription_start_date is not None:
+            subscription_end_date = _add_one_month_keep_day(subscription_start_date, subscription_start_date.day)
+
+        if is_monthly_player and subscription_start_date and subscription_end_date and subscription_end_date <= subscription_start_date:
             return jsonify({'error': 'نهاية الاشتراك يجب أن تكون بعد البداية'}), 400
 
         renewal_day = None
         next_renewal_date = None
-        amount_due = data.get('amountDue')
-        if is_academy_player:
-            amount_due = float(monthly_amount)
+        raw_amount_due = data.get('amountDue')
+        amount_due = float(raw_amount_due) if raw_amount_due is not None else None
         payment_status = data.get('paymentStatus', 'unpaid')
-        if is_academy_player:
+        if is_monthly_player:
+            if payment_status == 'paid':
+                amount_due = 0.0
+            elif amount_due is None or amount_due <= 0:
+                amount_due = float(monthly_amount)
             payment_status = 'paid' if float(amount_due or 0.0) <= 0 else 'unpaid'
 
         player = Player(
@@ -286,7 +318,7 @@ def create_player():
             date_of_birth=datetime.fromisoformat(data['dateOfBirth']).date() if data.get('dateOfBirth') else None,
             payment_status=payment_status,
             amount_due=amount_due,
-            monthly_amount=monthly_amount if is_academy_player else None,
+            monthly_amount=monthly_amount if is_monthly_player else None,
             renewal_day=renewal_day,
             next_renewal_date=next_renewal_date,
             subscription_start_date=subscription_start_date,
@@ -345,6 +377,10 @@ def update_player(player_id):
             return jsonify({'error': 'المجموعة الفرعية غير موجودة'}), 404
 
     is_academy_player = subgroup_for_update is not None and subgroup_for_update.subgroup_type == 'academy'
+    club_id_for_update = data.get('clubId', player.club_id)
+    club_for_update = Club.query.get(club_id_for_update) if club_id_for_update else None
+    resolved_monthly = _resolve_monthly_amount(subgroup_for_update, club_for_update, player.monthly_amount)
+    is_monthly_player = resolved_monthly > 0
     subscription_start = data.get('subscriptionStartDate')
     subscription_end = data.get('subscriptionEndDate')
     
@@ -370,19 +406,18 @@ def update_player(player_id):
     if 'pin' in data:
         player.pin = data['pin']
 
-    if is_academy_player:
-        if subgroup_for_update is not None:
-            player.monthly_amount = subgroup_for_update.monthly_amount
+    if is_academy_player and not is_monthly_player:
+        return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400
 
-        if player.monthly_amount is None:
-            return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400
+    if is_monthly_player:
+        player.monthly_amount = resolved_monthly
 
         if subscription_start is not None:
             player.subscription_start_date = datetime.fromisoformat(subscription_start).date() if subscription_start else None
         if subscription_end is not None:
             player.subscription_end_date = datetime.fromisoformat(subscription_end).date() if subscription_end else None
 
-        # Backfill legacy academy players created before subscription dates were introduced.
+        # Backfill legacy monthly players created before subscription dates were introduced.
         if player.subscription_start_date is None:
             base_start = player.created_at.date() if player.created_at else date.today()
             player.subscription_start_date = base_start
@@ -393,9 +428,12 @@ def update_player(player_id):
             )
 
         if player.subscription_start_date is None or player.subscription_end_date is None:
-            return jsonify({'error': 'تاريخ بداية ونهاية الاشتراك مطلوبان للاعبي الأكاديمية'}), 400
+            return jsonify({'error': 'تاريخ بداية ونهاية الاشتراك مطلوبان للاعب الاشتراك الشهري'}), 400
         if player.subscription_end_date <= player.subscription_start_date:
             return jsonify({'error': 'نهاية الاشتراك يجب أن تكون بعد البداية'}), 400
+
+        if player.payment_status != 'paid' and float(player.amount_due or 0.0) <= 0:
+            player.amount_due = float(player.monthly_amount or 0.0)
 
         player.renewal_day = None
         player.next_renewal_date = None
@@ -404,7 +442,9 @@ def update_player(player_id):
     else:
         player.renewal_day = None
         player.next_renewal_date = None
-        # Keep monthly/subscription fields for club monthly-subscription players.
+        player.monthly_amount = None
+        player.subscription_start_date = None
+        player.subscription_end_date = None
     
     player.updated_at = datetime.utcnow()
     db.session.commit()
