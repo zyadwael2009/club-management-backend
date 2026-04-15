@@ -67,6 +67,23 @@ def _recompute_due_after_payment_change(player, delta_revert=0.0, delta_apply=0.
     # If due tracking was previously uninitialized, keep the existing status unchanged.
 
 
+def _normalized_payment_type(player, payment_type):
+    if payment_type in ['league_subscription', 'monthly_subscription']:
+        return payment_type
+    subgroup_type = (player.subgroup.subgroup_type if player.subgroup else 'club') or 'club'
+    return 'monthly_subscription' if subgroup_type == 'academy' else 'league_subscription'
+
+
+def _should_payment_affect_due(player, payment_type):
+    normalized = _normalized_payment_type(player, payment_type)
+    if normalized == 'monthly_subscription':
+        return True
+
+    # League payments reduce due only for non-monthly players.
+    is_monthly_player = float(player.monthly_amount or 0.0) > 0
+    return not is_monthly_player
+
+
 @player_payments.route('/<player_id>/payments', methods=['GET'])
 @login_required
 def get_player_payments(player_id):
@@ -194,7 +211,8 @@ def add_player_payment(player_id):
         )
 
         # Keep player due amount in sync with recorded payments.
-        _recompute_due_after_payment_change(player, delta_revert=0.0, delta_apply=amount_paid)
+        if _should_payment_affect_due(player, payment_type):
+            _recompute_due_after_payment_change(player, delta_revert=0.0, delta_apply=amount_paid)
         _reset_subscription_after_full_payment(player, payment.payment_date)
 
         db.session.add(payment)
@@ -225,7 +243,8 @@ def delete_player_payment(player_id, payment_id):
         _apply_player_renewals(player)
 
         # Revert due amount when deleting a payment to preserve consistency.
-        _recompute_due_after_payment_change(player, delta_revert=payment.amount_paid, delta_apply=0.0)
+        if _should_payment_affect_due(player, payment.payment_type):
+            _recompute_due_after_payment_change(player, delta_revert=payment.amount_paid, delta_apply=0.0)
 
         db.session.delete(payment)
         db.session.commit()
@@ -345,7 +364,13 @@ def update_player_payment(player_id, payment_id):
         payment.notes = data.get('notes')
 
         # Undo old payment effect then apply updated one.
-        _recompute_due_after_payment_change(player, delta_revert=old_amount, delta_apply=new_amount)
+        old_affects_due = _should_payment_affect_due(player, payment.payment_type)
+        new_affects_due = _should_payment_affect_due(player, new_payment_type)
+        _recompute_due_after_payment_change(
+            player,
+            delta_revert=old_amount if old_affects_due else 0.0,
+            delta_apply=new_amount if new_affects_due else 0.0,
+        )
         _reset_subscription_after_full_payment(player, payment.payment_date)
 
         db.session.commit()

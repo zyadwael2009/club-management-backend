@@ -307,11 +307,9 @@ def create_player():
         amount_due = float(raw_amount_due) if raw_amount_due is not None else None
         payment_status = data.get('paymentStatus', 'unpaid')
         if is_monthly_player:
-            if payment_status == 'paid':
-                amount_due = 0.0
-            elif amount_due is None or amount_due <= 0:
-                amount_due = float(monthly_amount)
-            payment_status = 'paid' if float(amount_due or 0.0) <= 0 else 'unpaid'
+            # Monthly players start unpaid until a revenue payment is recorded.
+            amount_due = float(monthly_amount)
+            payment_status = 'unpaid'
 
         player = Player(
             full_name=data['fullName'],
@@ -391,7 +389,7 @@ def update_player(player_id):
     if 'paymentStatus' in data:
         player.payment_status = data['paymentStatus']
     if 'amountDue' in data:
-        if not is_academy_player:
+        if not is_monthly_player:
             player.amount_due = data['amountDue']
     if 'notes' in data:
         player.notes = data['notes']
@@ -432,13 +430,13 @@ def update_player(player_id):
         if player.subscription_end_date <= player.subscription_start_date:
             return jsonify({'error': 'نهاية الاشتراك يجب أن تكون بعد البداية'}), 400
 
-        if player.payment_status != 'paid' and float(player.amount_due or 0.0) <= 0:
+        # Monthly players payment status must follow due amount and revenues.
+        if player.amount_due is None:
             player.amount_due = float(player.monthly_amount or 0.0)
+        player.payment_status = 'paid' if float(player.amount_due or 0.0) <= 0 else 'unpaid'
 
         player.renewal_day = None
         player.next_renewal_date = None
-        if 'paymentStatus' not in data:
-            player.payment_status = 'paid' if float(player.amount_due or 0.0) <= 0 else 'unpaid'
     else:
         player.renewal_day = None
         player.next_renewal_date = None
