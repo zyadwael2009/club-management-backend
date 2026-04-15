@@ -76,12 +76,8 @@ def _normalized_payment_type(player, payment_type):
 
 def _should_payment_affect_due(player, payment_type):
     normalized = _normalized_payment_type(player, payment_type)
-    if normalized == 'monthly_subscription':
-        return True
-
-    # League payments reduce due only for non-monthly players.
-    is_monthly_player = float(player.monthly_amount or 0.0) > 0
-    return not is_monthly_player
+    # Both monthly and league payments contribute to settling outstanding due.
+    return normalized in ['monthly_subscription', 'league_subscription']
 
 
 @player_payments.route('/<player_id>/payments', methods=['GET'])

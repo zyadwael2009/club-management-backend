@@ -307,8 +307,11 @@ def create_player():
         amount_due = float(raw_amount_due) if raw_amount_due is not None else None
         payment_status = data.get('paymentStatus', 'unpaid')
         if is_monthly_player:
-            # Monthly players start unpaid until a revenue payment is recorded.
-            amount_due = float(monthly_amount)
+            # Preserve extra due entered by user and add monthly subscription component.
+            additional_due = float(amount_due or 0.0)
+            if additional_due < 0:
+                additional_due = 0.0
+            amount_due = float(monthly_amount) + additional_due
             payment_status = 'unpaid'
 
         player = Player(
@@ -389,7 +392,12 @@ def update_player(player_id):
     if 'paymentStatus' in data:
         player.payment_status = data['paymentStatus']
     if 'amountDue' in data:
-        if not is_monthly_player:
+        if is_monthly_player:
+            additional_due = float(data['amountDue'] or 0.0)
+            if additional_due < 0:
+                additional_due = 0.0
+            player.amount_due = float(resolved_monthly or 0.0) + additional_due
+        else:
             player.amount_due = data['amountDue']
     if 'notes' in data:
         player.notes = data['notes']
