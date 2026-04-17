@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, Club, User
+from models import db, Club, User, Player, Subgroup, Training, CheckIn, PlayerPayment
 from routes.auth import superadmin_required, login_required
 from datetime import datetime
 
@@ -194,3 +194,46 @@ def reactivate_club_accounts(club_id):
     club.deactivated_at = None
     db.session.commit()
     return jsonify({'message': 'تم إعادة تفعيل حسابات النادي', 'club': club.to_dict()}), 200
+
+
+@clubs_bp.route('/meta/data-presence', methods=['GET'])
+@login_required
+def get_clubs_data_presence():
+    """Return record counts by club to help superadmin trace hidden-by-scope data."""
+    current_user = User.query.get(session['user_id'])
+    if current_user.role != 'superadmin':
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+
+    clubs = Club.query.order_by(Club.created_at.desc()).all()
+    result = []
+    for club in clubs:
+        player_count = Player.query.filter_by(club_id=club.id).count()
+        subgroup_count = Subgroup.query.filter_by(club_id=club.id).count()
+        training_count = Training.query.filter_by(club_id=club.id).count()
+        checkin_count = CheckIn.query.filter_by(club_id=club.id).count()
+        payment_count = (
+            db.session.query(PlayerPayment)
+            .join(Player, PlayerPayment.player_id == Player.id)
+            .filter(Player.club_id == club.id)
+            .count()
+        )
+
+        result.append({
+            'clubId': club.id,
+            'clubName': club.name,
+            'isActive': bool(club.is_active),
+            'players': player_count,
+            'subgroups': subgroup_count,
+            'trainings': training_count,
+            'checkins': checkin_count,
+            'playerPayments': payment_count,
+            'hasOperationalData': any([
+                player_count > 0,
+                subgroup_count > 0,
+                training_count > 0,
+                checkin_count > 0,
+                payment_count > 0,
+            ]),
+        })
+
+    return jsonify(result), 200
