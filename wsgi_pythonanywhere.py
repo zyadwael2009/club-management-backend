@@ -36,7 +36,7 @@ if project_home not in sys.path:
     sys.path.insert(0, project_home)
 
 # Set environment variables
-os.environ['DATABASE_URL'] = f'sqlite:///{project_home}/instance/club_management.db'
+os.environ['DATABASE_URL'] = 'sqlite:////home/clubmanagment/club-management-backend/instance/club_management.db'
 os.environ['SECRET_KEY'] = 'your-super-secret-key-change-this-to-random-string'
 os.environ['UPLOAD_FOLDER'] = f'{project_home}/uploads'
 

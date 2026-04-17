@@ -68,7 +68,7 @@ def _recompute_due_after_payment_change(player, delta_revert=0.0, delta_apply=0.
 
 
 def _normalized_payment_type(player, payment_type):
-    if payment_type in ['league_subscription', 'monthly_subscription']:
+    if payment_type in ['league_subscription', 'monthly_subscription', 'clothing_bag']:
         return payment_type
     subgroup_type = (player.subgroup.subgroup_type if player.subgroup else 'club') or 'club'
     return 'monthly_subscription' if subgroup_type == 'academy' else 'league_subscription'
@@ -76,7 +76,7 @@ def _normalized_payment_type(player, payment_type):
 
 def _should_payment_affect_due(player, payment_type):
     normalized = _normalized_payment_type(player, payment_type)
-    # Both monthly and league payments contribute to settling outstanding due.
+    # Only subscription payments contribute to settling outstanding due.
     return normalized in ['monthly_subscription', 'league_subscription']
 
 
@@ -171,7 +171,7 @@ def add_player_payment(player_id):
 
         payment_type = data.get('paymentType')
         if subgroup_type == 'club':
-            if payment_type not in ['league_subscription', 'monthly_subscription']:
+            if payment_type not in ['league_subscription', 'monthly_subscription', 'clothing_bag']:
                 payment_type = 'league_subscription'
             if payment_type == 'monthly_subscription':
                 _initialize_club_monthly_subscription(player)
@@ -343,7 +343,7 @@ def update_player_payment(player_id, payment_id):
 
         new_payment_type = data.get('paymentType', payment.payment_type)
         if subgroup_type == 'club':
-            if new_payment_type not in ['league_subscription', 'monthly_subscription']:
+            if new_payment_type not in ['league_subscription', 'monthly_subscription', 'clothing_bag']:
                 new_payment_type = 'league_subscription'
             if new_payment_type == 'monthly_subscription':
                 _initialize_club_monthly_subscription(player)
@@ -353,6 +353,7 @@ def update_player_payment(player_id, payment_id):
         _apply_player_renewals(player)
 
         old_amount = float(payment.amount_paid)
+        old_payment_type = payment.payment_type
         payment.amount_paid = new_amount
         payment.revenue_scope = revenue_scope
         payment.payment_type = new_payment_type
@@ -360,7 +361,7 @@ def update_player_payment(player_id, payment_id):
         payment.notes = data.get('notes')
 
         # Undo old payment effect then apply updated one.
-        old_affects_due = _should_payment_affect_due(player, payment.payment_type)
+        old_affects_due = _should_payment_affect_due(player, old_payment_type)
         new_affects_due = _should_payment_affect_due(player, new_payment_type)
         _recompute_due_after_payment_change(
             player,

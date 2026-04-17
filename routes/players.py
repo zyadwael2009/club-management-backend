@@ -252,7 +252,9 @@ def create_player():
         return jsonify({'error': 'ليس لديك صلاحية لإضافة لاعبين لهذا النادي'}), 403
     
     # Check if username is provided and unique
-    username = data.get('username')
+    username = (data.get('username') or '').strip()
+    if not username:
+        username = None
     password = data.get('password')
     
     if username:
@@ -365,11 +367,8 @@ def update_player(player_id):
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا اللاعب'}), 403
     
-    data = request.get_json()
+    data = request.get_json() or {}
     
-    if not data:
-        return jsonify({'error': 'لا توجد بيانات'}), 400
-
     subgroup_id_for_update = data.get('subgroupId', player.subgroup_id)
     subgroup_for_update = None
     if subgroup_id_for_update:
@@ -411,6 +410,53 @@ def update_player(player_id):
         player.subgroup_id = data['subgroupId']
     if 'pin' in data:
         player.pin = data['pin']
+
+    username_payload_present = 'username' in data
+    password_payload_present = 'password' in data
+    username = (data.get('username') or '').strip() if username_payload_present else None
+    password = data.get('password') if password_payload_present else None
+    user_account = User.query.filter_by(player_id=player.id).first()
+
+    if username_payload_present:
+        if username == '':
+            if user_account:
+                if password_payload_present and password:
+                    return jsonify({'error': 'لا يمكن إرسال كلمة مرور بدون اسم مستخدم'}), 400
+                db.session.delete(user_account)
+                user_account = None
+        else:
+            existing_user = User.query.filter_by(username=username).first()
+            if existing_user and (not user_account or existing_user.id != user_account.id):
+                return jsonify({'error': 'اسم المستخدم موجود بالفعل'}), 400
+
+            if user_account:
+                user_account.username = username
+                if password_payload_present and password:
+                    if len(password) < 4:
+                        return jsonify({'error': 'كلمة المرور يجب أن تكون 4 أحرف على الأقل'}), 400
+                    user_account.set_password(password)
+            else:
+                if not password:
+                    return jsonify({'error': 'كلمة المرور مطلوبة عند إنشاء حساب جديد'}), 400
+                if len(password) < 4:
+                    return jsonify({'error': 'كلمة المرور يجب أن تكون 4 أحرف على الأقل'}), 400
+                user_account = User(
+                    username=username,
+                    role='player',
+                    club_id=player.club_id,
+                    player_id=player.id,
+                )
+                user_account.set_password(password)
+                db.session.add(user_account)
+    elif password_payload_present and password:
+        if not user_account:
+            return jsonify({'error': 'لا يوجد حساب مرتبط بهذا اللاعب. أدخل اسم المستخدم أولاً'}), 400
+        if len(password) < 4:
+            return jsonify({'error': 'كلمة المرور يجب أن تكون 4 أحرف على الأقل'}), 400
+        user_account.set_password(password)
+
+    if user_account:
+        user_account.club_id = player.club_id
 
     if is_academy_player and not is_monthly_player:
         return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400
