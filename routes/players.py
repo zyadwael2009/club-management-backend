@@ -252,7 +252,7 @@ def create_player():
         return jsonify({'error': 'ليس لديك صلاحية لإضافة لاعبين لهذا النادي'}), 403
     
     # Check if username is provided and unique
-    username = (data.get('username') or '').strip()
+    username = data.get('username')
     password = data.get('password')
     
     if username:
@@ -370,16 +370,6 @@ def update_player(player_id):
     if not data:
         return jsonify({'error': 'لا توجد بيانات'}), 400
 
-    username_provided = 'username' in data
-    password_provided = 'password' in data
-    username_value = (data.get('username') or '').strip() if username_provided else None
-    password_value = data.get('password') if password_provided else None
-    player_user = User.query.filter_by(player_id=player.id).first()
-
-    if password_provided and password_value:
-        if len(str(password_value)) < 4:
-            return jsonify({'error': 'كلمة المرور يجب أن تكون 4 أحرف على الأقل'}), 400
-
     subgroup_id_for_update = data.get('subgroupId', player.subgroup_id)
     subgroup_for_update = None
     if subgroup_id_for_update:
@@ -461,39 +451,6 @@ def update_player(player_id):
         player.monthly_amount = None
         player.subscription_start_date = None
         player.subscription_end_date = None
-
-    if username_provided:
-        if username_value:
-            existing_user = User.query.filter_by(username=username_value).first()
-            if existing_user and (player_user is None or existing_user.id != player_user.id):
-                return jsonify({'error': 'اسم المستخدم موجود بالفعل'}), 400
-
-            if player_user is None:
-                if not password_value:
-                    return jsonify({'error': 'كلمة المرور مطلوبة عند إنشاء اسم مستخدم جديد'}), 400
-
-                player_user = User(
-                    username=username_value,
-                    role='player',
-                    club_id=player.club_id,
-                    player_id=player.id,
-                )
-                player_user.set_password(str(password_value))
-                db.session.add(player_user)
-            else:
-                player_user.username = username_value
-        else:
-            if player_user is not None:
-                db.session.delete(player_user)
-                player_user = None
-
-    if password_provided and password_value:
-        if player_user is None:
-            return jsonify({'error': 'لا يوجد حساب لاعب لتحديث كلمة المرور'}), 400
-        player_user.set_password(str(password_value))
-
-    if player_user is not None:
-        player_user.club_id = player.club_id
     
     player.updated_at = datetime.utcnow()
     db.session.commit()

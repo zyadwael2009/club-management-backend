@@ -78,7 +78,7 @@ class Subgroup(db.Model):
 
 
 class Training(db.Model):
-    """Training session that can target one or more subgroups"""
+    """Training session assigned to one subgroup"""
     __tablename__ = 'trainings'
 
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
@@ -87,46 +87,18 @@ class Training(db.Model):
     subgroup_id = db.Column(db.String(36), db.ForeignKey('subgroups.id'), nullable=False)
     training_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy | first_team
     training_date = db.Column(db.Date, nullable=False)
-    start_time = db.Column(db.String(5), nullable=True)  # HH:MM (optional)
     notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    def assigned_subgroup_ids(self):
-        links = TrainingSubgroup.query.filter_by(training_id=self.id).all()
-        subgroup_ids = [link.subgroup_id for link in links if link.subgroup_id]
-        if self.subgroup_id and self.subgroup_id not in subgroup_ids:
-            subgroup_ids.insert(0, self.subgroup_id)
-
-        ordered = []
-        seen = set()
-        for subgroup_id in subgroup_ids:
-            if subgroup_id not in seen:
-                seen.add(subgroup_id)
-                ordered.append(subgroup_id)
-        return ordered
-
-    def assigned_subgroup_names(self):
-        subgroup_ids = self.assigned_subgroup_ids()
-        if not subgroup_ids:
-            return []
-
-        subgroups = Subgroup.query.filter(Subgroup.id.in_(subgroup_ids)).all()
-        subgroup_name_map = {subgroup.id: subgroup.name for subgroup in subgroups}
-        return [subgroup_name_map[subgroup_id] for subgroup_id in subgroup_ids if subgroup_id in subgroup_name_map]
-
     def to_dict(self):
-        subgroup_ids = self.assigned_subgroup_ids()
         return {
             'id': self.id,
             'name': self.name,
             'clubId': self.club_id,
             'subgroupId': self.subgroup_id,
-            'subgroupIds': subgroup_ids,
-            'subgroupNames': self.assigned_subgroup_names(),
             'trainingScope': self.training_scope or 'club',
             'trainingDate': self.training_date.isoformat() if self.training_date else None,
-            'startTime': self.start_time,
             'notes': self.notes,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
             'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
@@ -220,7 +192,6 @@ class Player(db.Model):
         }
     
     def to_dict(self, include_match_stats=False):
-        user = User.query.filter_by(player_id=self.id).first()
         result = {
             'id': self.id,
             'fullName': self.full_name,
@@ -239,7 +210,6 @@ class Player(db.Model):
             'subgroupId': self.subgroup_id,
             'subgroupName': self.subgroup.name if self.subgroup else None,
             'subgroupType': self.subgroup.subgroup_type if self.subgroup else None,
-            'username': user.username if user else None,
             'pin': self.pin,
             'qrCode': self.qr_code,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
@@ -282,20 +252,6 @@ class CheckInTraining(db.Model):
     checkin_id = db.Column(db.String(36), db.ForeignKey('checkins.id'), nullable=False, unique=True)
     training_id = db.Column(db.String(36), db.ForeignKey('trainings.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-
-class TrainingSubgroup(db.Model):
-    """Links training sessions to one or more assigned subgroups"""
-    __tablename__ = 'training_subgroups'
-
-    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
-    training_id = db.Column(db.String(36), db.ForeignKey('trainings.id'), nullable=False)
-    subgroup_id = db.Column(db.String(36), db.ForeignKey('subgroups.id'), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-    __table_args__ = (
-        db.UniqueConstraint('training_id', 'subgroup_id', name='uq_training_subgroup_link'),
-    )
 
 
 # ==================== AUTHENTICATION & AUTHORIZATION ====================
@@ -450,7 +406,7 @@ class PlayerPayment(db.Model):
     player_id = db.Column(db.String(36), db.ForeignKey('players.id'), nullable=False)
     amount_paid = db.Column(db.Float, nullable=False)  # Amount received FROM player
     revenue_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
-    payment_type = db.Column(db.String(30), nullable=True)  # league_subscription | monthly_subscription | clothing_bag
+    payment_type = db.Column(db.String(30), nullable=True)  # league_subscription | monthly_subscription
     payment_date = db.Column(db.Date, nullable=False)
     notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

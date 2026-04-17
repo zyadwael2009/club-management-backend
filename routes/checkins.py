@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, CheckIn, Player, User, Training, CheckInTraining, TrainingSubgroup
+from models import db, CheckIn, Player, User, Training, CheckInTraining
 from routes.auth import login_required
 from datetime import datetime, date, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -52,17 +52,6 @@ def _is_player_allowed_for_training(player, training):
     """Validate player subgroup against training scope."""
     if player.subgroup_id is None:
         return False
-
-    assigned_subgroup_ids = [
-        row.subgroup_id
-        for row in TrainingSubgroup.query.filter_by(training_id=training.id).all()
-        if row.subgroup_id
-    ]
-    if training.subgroup_id and training.subgroup_id not in assigned_subgroup_ids:
-        assigned_subgroup_ids.append(training.subgroup_id)
-
-    if assigned_subgroup_ids:
-        return player.subgroup_id in assigned_subgroup_ids
 
     if training.subgroup_id == player.subgroup_id:
         return True

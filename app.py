@@ -8,7 +8,6 @@ from sqlalchemy import inspect, text
 
 def _ensure_schema_updates():
     inspector = inspect(db.engine)
-    table_names = set(inspector.get_table_names())
     columns = {col['name'] for col in inspector.get_columns('clubs')}
     player_columns = {col['name'] for col in inspector.get_columns('players')}
     subgroup_columns = {col['name'] for col in inspector.get_columns('subgroups')}
@@ -16,9 +15,9 @@ def _ensure_schema_updates():
     coach_payment_columns = {col['name'] for col in inspector.get_columns('coach_payments')}
     match_expense_columns = set()
     training_columns = set()
-    if 'match_expenses' in table_names:
+    if 'match_expenses' in inspector.get_table_names():
         match_expense_columns = {col['name'] for col in inspector.get_columns('match_expenses')}
-    if 'trainings' in table_names:
+    if 'trainings' in inspector.get_table_names():
         training_columns = {col['name'] for col in inspector.get_columns('trainings')}
 
     statements = []
@@ -50,24 +49,10 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE subgroups ADD COLUMN monthly_amount FLOAT")
     if 'expense_scope' not in coach_payment_columns:
         statements.append("ALTER TABLE coach_payments ADD COLUMN expense_scope VARCHAR(20) DEFAULT 'club'")
-    if 'expense_scope' not in match_expense_columns and 'match_expenses' in table_names:
+    if 'expense_scope' not in match_expense_columns and 'match_expenses' in inspector.get_table_names():
         statements.append("ALTER TABLE match_expenses ADD COLUMN expense_scope VARCHAR(20) DEFAULT 'club'")
-    if 'training_scope' not in training_columns and 'trainings' in table_names:
+    if 'training_scope' not in training_columns and 'trainings' in inspector.get_table_names():
         statements.append("ALTER TABLE trainings ADD COLUMN training_scope VARCHAR(20) DEFAULT 'club'")
-    if 'start_time' not in training_columns and 'trainings' in table_names:
-        statements.append("ALTER TABLE trainings ADD COLUMN start_time VARCHAR(5)")
-    if 'training_subgroups' not in table_names:
-        statements.append(
-            "CREATE TABLE training_subgroups ("
-            "id VARCHAR(36) PRIMARY KEY, "
-            "training_id VARCHAR(36) NOT NULL, "
-            "subgroup_id VARCHAR(36) NOT NULL, "
-            "created_at DATETIME, "
-            "UNIQUE(training_id, subgroup_id), "
-            "FOREIGN KEY(training_id) REFERENCES trainings(id), "
-            "FOREIGN KEY(subgroup_id) REFERENCES subgroups(id)"
-            ")"
-        )
 
     for stmt in statements:
         try:
