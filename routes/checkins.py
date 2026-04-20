@@ -169,7 +169,8 @@ def create_checkin():
         return jsonify({'error': 'التدريب لا يتبع نفس نادي اللاعب'}), 400
 
     subgroup = player.subgroup
-    if subgroup is not None and subgroup.subgroup_type == 'academy':
+    is_monthly_subscription = float(player.monthly_amount or 0.0) > 0
+    if subgroup is not None and subgroup.subgroup_type == 'academy' and is_monthly_subscription:
         if player.subscription_end_date and player.subscription_end_date < date.today():
             player.payment_status = 'unpaid'
             monthly = float(player.monthly_amount or subgroup.monthly_amount or 0.0)

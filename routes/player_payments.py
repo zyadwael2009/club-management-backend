@@ -70,8 +70,12 @@ def _recompute_due_after_payment_change(player, delta_revert=0.0, delta_apply=0.
 def _normalized_payment_type(player, payment_type):
     if payment_type in ['league_subscription', 'monthly_subscription', 'clothing_bag']:
         return payment_type
+
     subgroup_type = (player.subgroup.subgroup_type if player.subgroup else 'club') or 'club'
-    return 'monthly_subscription' if subgroup_type == 'academy' else 'league_subscription'
+    has_monthly_subscription = float(player.monthly_amount or 0.0) > 0
+    if subgroup_type == 'academy' and has_monthly_subscription:
+        return 'monthly_subscription'
+    return 'league_subscription'
 
 
 def _should_payment_affect_due(player, payment_type):
@@ -176,7 +180,7 @@ def add_player_payment(player_id):
             if payment_type == 'monthly_subscription':
                 _initialize_club_monthly_subscription(player)
         else:
-            payment_type = 'monthly_subscription'
+            payment_type = 'monthly_subscription' if float(player.monthly_amount or 0.0) > 0 else 'league_subscription'
 
         if payment_type == 'monthly_subscription':
             monthly_entries_count = (
@@ -348,7 +352,7 @@ def update_player_payment(player_id, payment_id):
             if new_payment_type == 'monthly_subscription':
                 _initialize_club_monthly_subscription(player)
         else:
-            new_payment_type = 'monthly_subscription'
+            new_payment_type = 'monthly_subscription' if float(player.monthly_amount or 0.0) > 0 else 'league_subscription'
 
         _apply_player_renewals(player)
 

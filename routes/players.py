@@ -17,33 +17,59 @@ def _add_one_month_keep_day(base_date, day_of_month):
     return date(year, month, min(day_of_month, max_day))
 
 
-def _resolve_monthly_amount(subgroup, club, current_player_monthly=None):
+def _resolve_monthly_amount(subgroup, club, current_player_monthly=None, requested_monthly=None):
+    if requested_monthly is not None:
+        return max(0.0, float(requested_monthly))
+
+    if current_player_monthly is not None:
+        current_monthly = float(current_player_monthly or 0.0)
+        if current_monthly <= 0:
+            return 0.0
+        return current_monthly
+
     subgroup_monthly = float(subgroup.monthly_amount or 0.0) if subgroup else 0.0
     club_monthly = float(club.monthly_amount or 0.0) if club else 0.0
-    current_monthly = float(current_player_monthly or 0.0)
     if subgroup_monthly > 0:
         return subgroup_monthly
     if club_monthly > 0:
         return club_monthly
-    if current_monthly > 0:
-        return current_monthly
     return 0.0
+
+
+def _parse_optional_monthly_amount(raw_value):
+    if raw_value is None or raw_value == '':
+        return None
+
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError('المبلغ الشهري غير صالح')
+
+    if value < 0:
+        raise ValueError('المبلغ الشهري لا يمكن أن يكون أقل من صفر')
+
+    return value
 
 
 def _apply_player_renewals(player, today=None):
     current_date = today or date.today()
     subgroup = player.subgroup
     club = player.club
-    resolved_monthly = _resolve_monthly_amount(subgroup, club, player.monthly_amount)
-    if resolved_monthly <= 0:
-        return False
-
     changed = False
 
-    # Keep player monthly amount aligned with subgroup/club monthly settings.
-    if float(player.monthly_amount or 0.0) != resolved_monthly:
-        player.monthly_amount = resolved_monthly
-        changed = True
+    stored_monthly = player.monthly_amount
+    resolved_monthly = float(stored_monthly or 0.0)
+
+    # Backfill legacy rows that relied on subgroup/club defaults and had null monthly value.
+    if stored_monthly is None:
+        derived_monthly = _resolve_monthly_amount(subgroup, club)
+        if derived_monthly > 0:
+            resolved_monthly = derived_monthly
+            player.monthly_amount = derived_monthly
+            changed = True
+
+    if resolved_monthly <= 0:
+        return changed
 
     if not player.subscription_end_date:
         base_start = player.subscription_start_date or (player.created_at.date() if player.created_at else current_date)
@@ -278,18 +304,25 @@ def create_player():
         if subgroup.club_id != club_id:
             return jsonify({'error': 'المجموعة الفرعية لا تتبع هذا النادي'}), 400
 
-    is_academy_player = subgroup is not None and subgroup.subgroup_type == 'academy'
-    monthly_amount = _resolve_monthly_amount(subgroup, club)
+    try:
+        requested_monthly = _parse_optional_monthly_amount(data.get('monthlyAmount'))
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    monthly_amount = _resolve_monthly_amount(
+        subgroup,
+        club,
+        requested_monthly=requested_monthly,
+    )
     is_monthly_player = monthly_amount > 0
     subscription_start = data.get('subscriptionStartDate')
     subscription_end = data.get('subscriptionEndDate')
 
-    if is_academy_player and not is_monthly_player:
-        return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400
-
-    if is_monthly_player:
-        if monthly_amount is None or monthly_amount <= 0:
-            return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400
+    stored_monthly_amount = (
+        requested_monthly
+        if requested_monthly is not None
+        else (monthly_amount if is_monthly_player else None)
+    )
 
     try:
         subscription_start_date = datetime.fromisoformat(subscription_start).date() if (is_monthly_player and subscription_start) else None
@@ -321,7 +354,7 @@ def create_player():
             date_of_birth=datetime.fromisoformat(data['dateOfBirth']).date() if data.get('dateOfBirth') else None,
             payment_status=payment_status,
             amount_due=amount_due,
-            monthly_amount=monthly_amount if is_monthly_player else None,
+            monthly_amount=stored_monthly_amount,
             renewal_day=renewal_day,
             next_renewal_date=next_renewal_date,
             subscription_start_date=subscription_start_date,
@@ -376,10 +409,20 @@ def update_player(player_id):
         if not subgroup_for_update:
             return jsonify({'error': 'المجموعة الفرعية غير موجودة'}), 404
 
-    is_academy_player = subgroup_for_update is not None and subgroup_for_update.subgroup_type == 'academy'
     club_id_for_update = data.get('clubId', player.club_id)
     club_for_update = Club.query.get(club_id_for_update) if club_id_for_update else None
-    resolved_monthly = _resolve_monthly_amount(subgroup_for_update, club_for_update, player.monthly_amount)
+
+    try:
+        requested_monthly = _parse_optional_monthly_amount(data.get('monthlyAmount'))
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    resolved_monthly = _resolve_monthly_amount(
+        subgroup_for_update,
+        club_for_update,
+        player.monthly_amount,
+        requested_monthly,
+    )
     is_monthly_player = resolved_monthly > 0
     subscription_start = data.get('subscriptionStartDate')
     subscription_end = data.get('subscriptionEndDate')
@@ -458,9 +501,6 @@ def update_player(player_id):
     if user_account:
         user_account.club_id = player.club_id
 
-    if is_academy_player and not is_monthly_player:
-        return jsonify({'error': 'المبلغ الشهري مطلوب للاعبي الأكاديمية'}), 400
-
     if is_monthly_player:
         player.monthly_amount = resolved_monthly
 
@@ -494,7 +534,12 @@ def update_player(player_id):
     else:
         player.renewal_day = None
         player.next_renewal_date = None
-        player.monthly_amount = None
+        if requested_monthly is not None and requested_monthly <= 0:
+            player.monthly_amount = 0.0
+        elif player.monthly_amount is not None and float(player.monthly_amount or 0.0) == 0.0:
+            player.monthly_amount = 0.0
+        else:
+            player.monthly_amount = None
         player.subscription_start_date = None
         player.subscription_end_date = None
     
