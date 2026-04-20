@@ -67,6 +67,16 @@ def list_trainings():
     elif current_user.role == 'coach':
         if current_user.club_id:
             query = query.filter_by(club_id=current_user.club_id)
+    elif current_user.role == 'player':
+        if not current_user.player_id:
+            return jsonify([]), 200
+
+        player = Player.query.get(current_user.player_id)
+        if not player or not player.club_id or not player.subgroup_id:
+            return jsonify([]), 200
+
+        query = query.filter_by(club_id=player.club_id)
+        subgroup_id = player.subgroup_id
     elif current_user.role != 'superadmin':
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif club_id:
