@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Match, MatchExpense, GeneralExpense, Player, Club, User
 from routes.auth import login_required, admin_or_superadmin_required
+from season_context import get_effective_season_id
 from datetime import datetime
 
 matches_bp = Blueprint('matches', __name__)
@@ -13,6 +14,7 @@ def get_matches():
     current_user = User.query.get(session['user_id'])
     club_id = request.args.get('club_id')
     subgroup_id = request.args.get('subgroup_id')
+    season_id = get_effective_season_id(default_to_current=True)
     
     query = Match.query
     
@@ -27,13 +29,16 @@ def get_matches():
         if current_user.player_id:
             player = Player.query.get(current_user.player_id)
             if player:
-                matches = [m for m in player.matches]
+                matches = [m for m in player.matches if (not season_id or m.season_id == season_id)]
                 return jsonify([m.to_dict(include_players=True) for m in matches])
         return jsonify([])
     else:
         # Superadmin can filter by club
         if club_id:
             query = query.filter_by(club_id=club_id)
+
+    if season_id:
+        query = query.filter_by(season_id=season_id)
     
     if subgroup_id:
         query = query.filter_by(subgroup_id=subgroup_id)
@@ -75,6 +80,7 @@ def create_match():
     """Create a new match (admin/superadmin only)"""
     current_user = User.query.get(session['user_id'])
     data = request.get_json()
+    season_id = get_effective_season_id(default_to_current=True)
     
     if not data.get('clubId'):
         return jsonify({'error': 'معرف النادي مطلوب'}), 400
@@ -99,6 +105,7 @@ def create_match():
     
     match = Match(
         club_id=data['clubId'],
+        season_id=season_id,
         match_type=data['matchType'],
         opponent_name=data['opponentName'],
         match_date=datetime.fromisoformat(data['matchDate']).date(),
@@ -194,7 +201,11 @@ def get_club_matches(club_id):
     if not club:
         return jsonify({'error': 'النادي غير موجود'}), 404
     
-    matches = Match.query.filter_by(club_id=club_id).order_by(Match.match_date.desc()).all()
+    season_id = get_effective_season_id(default_to_current=True)
+    query = Match.query.filter_by(club_id=club_id)
+    if season_id:
+        query = query.filter_by(season_id=season_id)
+    matches = query.order_by(Match.match_date.desc()).all()
     return jsonify([m.to_dict(include_players=True) for m in matches])
 
 
@@ -215,7 +226,11 @@ def get_player_matches(player_id):
     if not player:
         return jsonify({'error': 'اللاعب غير موجود'}), 404
     
-    matches = player.matches.order_by(Match.match_date.desc()).all()
+    season_id = get_effective_season_id(default_to_current=True)
+    matches_query = player.matches
+    if season_id:
+        matches_query = matches_query.filter(Match.season_id == season_id)
+    matches = matches_query.order_by(Match.match_date.desc()).all()
     return jsonify([m.to_dict() for m in matches])
 
 
@@ -232,7 +247,11 @@ def get_club_match_expenses(club_id):
     if current_user.role == 'player':
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
 
-    expenses = MatchExpense.query.filter_by(club_id=club_id).order_by(MatchExpense.payment_date.desc()).all()
+    season_id = get_effective_season_id(default_to_current=True)
+    query = MatchExpense.query.filter_by(club_id=club_id)
+    if season_id:
+        query = query.filter_by(season_id=season_id)
+    expenses = query.order_by(MatchExpense.payment_date.desc()).all()
     return jsonify([e.to_dict() for e in expenses]), 200
 
 
@@ -266,6 +285,7 @@ def create_match_expense():
         expense = MatchExpense(
             club_id=match.club_id,
             match_id=match.id,
+            season_id=match.season_id,
             expense_type=data['expenseType'],
             expense_scope=data.get('expenseScope', 'club'),
             amount=amount,
@@ -313,7 +333,11 @@ def get_club_general_expenses(club_id):
     if current_user.role == 'player':
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
 
-    expenses = GeneralExpense.query.filter_by(club_id=club_id).order_by(GeneralExpense.payment_date.desc()).all()
+    season_id = get_effective_season_id(default_to_current=True)
+    query = GeneralExpense.query.filter_by(club_id=club_id)
+    if season_id:
+        query = query.filter_by(season_id=season_id)
+    expenses = query.order_by(GeneralExpense.payment_date.desc()).all()
     return jsonify([e.to_dict() for e in expenses]), 200
 
 
@@ -336,6 +360,7 @@ def create_general_expense():
         return jsonify({'error': 'النطاق يجب أن يكون club أو academy'}), 400
 
     try:
+        season_id = get_effective_season_id(default_to_current=True)
         amount = float(data['amount'])
         if amount <= 0:
             return jsonify({'error': 'المبلغ يجب أن يكون أكبر من صفر'}), 400
@@ -348,6 +373,7 @@ def create_general_expense():
 
         expense = GeneralExpense(
             club_id=data['clubId'],
+            season_id=season_id,
             expense_type=data['expenseType'],
             expense_scope=data['expenseScope'],
             amount=amount,

@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Coach, User, CoachPayment, CoachCheckIn
 from routes.auth import login_required, admin_or_superadmin_required
+from season_context import get_effective_season_id
 from werkzeug.utils import secure_filename
 import os
 from datetime import datetime
@@ -86,6 +87,7 @@ def create_coach():
         coach = Coach(
             full_name=data['fullName'],
             club_id=data['clubId'],
+            is_active=bool(data.get('isActive', True)),
             monthly_salary=data.get('monthlySalary'),
             contact_info=data.get('contactInfo'),
             notes=data.get('notes'),
@@ -141,6 +143,9 @@ def update_coach(coach_id):
             coach.notes = data['notes']
         if 'imageUrl' in data:
             coach.image_url = data['imageUrl']
+        if 'isActive' in data:
+            coach.is_active = bool(data['isActive'])
+            coach.deactivated_at = None if coach.is_active else datetime.utcnow()
         
         coach.updated_at = datetime.utcnow()
         db.session.commit()
@@ -152,6 +157,28 @@ def update_coach(coach_id):
         return jsonify({'error': f'فشل تحديث المدرب: {str(e)}'}), 500
 
 
+@coaches.route('/<coach_id>/toggle-active', methods=['PUT'])
+@admin_or_superadmin_required
+def toggle_coach_active(coach_id):
+    coach = Coach.query.get(coach_id)
+    if not coach:
+        return jsonify({'error': 'المدرب غير موجود'}), 404
+
+    current_user = User.query.get(session['user_id'])
+    if current_user.role == 'admin' and coach.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا المدرب'}), 403
+
+    data = request.get_json() or {}
+    make_active = data.get('isActive')
+    if make_active is None:
+        make_active = not bool(coach.is_active)
+    coach.is_active = bool(make_active)
+    coach.deactivated_at = None if coach.is_active else datetime.utcnow()
+    coach.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify(coach.to_dict()), 200
+
+
 @coaches.route('/<coach_id>', methods=['DELETE'])
 @admin_or_superadmin_required
 def delete_coach(coach_id):
@@ -159,6 +186,8 @@ def delete_coach(coach_id):
     coach = Coach.query.get(coach_id)
     if not coach:
         return jsonify({'error': 'المدرب غير موجود'}), 404
+    if not bool(coach.is_active):
+        return jsonify({'error': 'لا يمكن تسجيل حضور مدرب غير نشط'}), 400
     
     current_user = User.query.get(session['user_id'])
     
@@ -201,7 +230,11 @@ def get_coach_payments(coach_id):
     elif current_user.role == 'coach' and current_user.coach_id != coach_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     
-    payments = CoachPayment.query.filter_by(coach_id=coach_id).order_by(CoachPayment.payment_date.desc()).all()
+    season_id = get_effective_season_id(default_to_current=True)
+    query = CoachPayment.query.filter_by(coach_id=coach_id)
+    if season_id:
+        query = query.filter_by(season_id=season_id)
+    payments = query.order_by(CoachPayment.payment_date.desc()).all()
     return jsonify([payment.to_dict() for payment in payments]), 200
 
 
@@ -218,10 +251,13 @@ def get_club_coach_payments(club_id):
     if current_user.role == 'player':
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
 
+    season_id = get_effective_season_id(default_to_current=True)
+
     rows = (
         db.session.query(CoachPayment, Coach)
         .join(Coach, CoachPayment.coach_id == Coach.id)
         .filter(Coach.club_id == club_id)
+        .filter(CoachPayment.season_id == season_id if season_id else True)
         .order_by(CoachPayment.payment_date.desc())
         .all()
     )
@@ -256,12 +292,14 @@ def add_coach_payment(coach_id):
         return jsonify({'error': 'المبلغ وتاريخ الدفع والشهر مطلوبون'}), 400
     
     try:
+        season_id = get_effective_season_id(default_to_current=True)
         expense_scope = data.get('expenseScope', 'club')
         if expense_scope not in ['club', 'academy']:
             return jsonify({'error': 'نوع المصروف يجب أن يكون club أو academy'}), 400
 
         payment = CoachPayment(
             coach_id=coach_id,
+            season_id=season_id,
             amount=float(data['amount']),
             payment_date=datetime.fromisoformat(data['paymentDate'].replace('Z', '+00:00')).date(),
             payment_month=data['paymentMonth'],
@@ -342,9 +380,12 @@ def create_coach_checkin():
     elif current_user.role == 'coach' and current_user.coach_id != coach.id:
         return jsonify({'error': 'ليس لديك صلاحية للتسجيل لهذا المدرب'}), 403
 
+    season_id = get_effective_season_id(default_to_current=True)
+
     record = CoachCheckIn(
         coach_id=coach.id,
         club_id=coach.club_id,
+        season_id=season_id,
         coach_name=coach.full_name,
     )
     db.session.add(record)
@@ -366,5 +407,9 @@ def get_coach_checkins(coach_id):
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
 
     limit = request.args.get('limit', 20, type=int)
-    rows = CoachCheckIn.query.filter_by(coach_id=coach_id).order_by(CoachCheckIn.timestamp.desc()).limit(limit).all()
+    season_id = get_effective_season_id(default_to_current=True)
+    query = CoachCheckIn.query.filter_by(coach_id=coach_id)
+    if season_id:
+        query = query.filter_by(season_id=season_id)
+    rows = query.order_by(CoachCheckIn.timestamp.desc()).limit(limit).all()
     return jsonify([row.to_dict() for row in rows]), 200

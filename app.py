@@ -2,8 +2,9 @@ import os
 from flask import Flask, jsonify, render_template
 from flask_cors import CORS
 from config import Config
-from models import db, User
+from models import db, User, Season
 from sqlalchemy import inspect, text
+from datetime import datetime
 
 
 def _ensure_schema_updates():
@@ -11,13 +12,26 @@ def _ensure_schema_updates():
     table_names = set(inspector.get_table_names())
     columns = {col['name'] for col in inspector.get_columns('clubs')}
     player_columns = {col['name'] for col in inspector.get_columns('players')}
+    coach_columns = {col['name'] for col in inspector.get_columns('coaches')} if 'coaches' in table_names else set()
     subgroup_columns = {col['name'] for col in inspector.get_columns('subgroups')}
     player_payment_columns = {col['name'] for col in inspector.get_columns('player_payments')}
     coach_payment_columns = {col['name'] for col in inspector.get_columns('coach_payments')}
     match_expense_columns = set()
+    general_expense_columns = set()
+    checkin_columns = set()
+    match_columns = set()
+    coach_checkin_columns = set()
     training_columns = set()
     if 'match_expenses' in table_names:
         match_expense_columns = {col['name'] for col in inspector.get_columns('match_expenses')}
+    if 'general_expenses' in table_names:
+        general_expense_columns = {col['name'] for col in inspector.get_columns('general_expenses')}
+    if 'checkins' in table_names:
+        checkin_columns = {col['name'] for col in inspector.get_columns('checkins')}
+    if 'matches' in table_names:
+        match_columns = {col['name'] for col in inspector.get_columns('matches')}
+    if 'coach_checkins' in table_names:
+        coach_checkin_columns = {col['name'] for col in inspector.get_columns('coach_checkins')}
     if 'trainings' in table_names:
         training_columns = {col['name'] for col in inspector.get_columns('trainings')}
 
@@ -36,6 +50,14 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE player_payments ADD COLUMN payment_type VARCHAR(30)")
     if 'phone_number' not in player_columns:
         statements.append("ALTER TABLE players ADD COLUMN phone_number VARCHAR(30)")
+    if 'is_active' not in player_columns:
+        statements.append("ALTER TABLE players ADD COLUMN is_active BOOLEAN DEFAULT 1")
+    if 'paused_at' not in player_columns:
+        statements.append("ALTER TABLE players ADD COLUMN paused_at DATETIME")
+    if 'paused_amount_due' not in player_columns:
+        statements.append("ALTER TABLE players ADD COLUMN paused_amount_due FLOAT")
+    if 'paused_league_due' not in player_columns:
+        statements.append("ALTER TABLE players ADD COLUMN paused_league_due FLOAT")
     if 'monthly_amount' not in player_columns:
         statements.append("ALTER TABLE players ADD COLUMN monthly_amount FLOAT")
     if 'renewal_day' not in player_columns:
@@ -48,6 +70,14 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE players ADD COLUMN subscription_end_date DATE")
     if 'monthly_amount' not in subgroup_columns:
         statements.append("ALTER TABLE subgroups ADD COLUMN monthly_amount FLOAT")
+    if 'is_active' not in coach_columns and 'coaches' in table_names:
+        statements.append("ALTER TABLE coaches ADD COLUMN is_active BOOLEAN DEFAULT 1")
+    if 'deactivated_at' not in coach_columns and 'coaches' in table_names:
+        statements.append("ALTER TABLE coaches ADD COLUMN deactivated_at DATETIME")
+    if 'league_amount' not in subgroup_columns:
+        statements.append("ALTER TABLE subgroups ADD COLUMN league_amount FLOAT")
+    if 'league_due' not in player_columns:
+        statements.append("ALTER TABLE players ADD COLUMN league_due FLOAT")
     if 'expense_scope' not in coach_payment_columns:
         statements.append("ALTER TABLE coach_payments ADD COLUMN expense_scope VARCHAR(20) DEFAULT 'club'")
     if 'expense_scope' not in match_expense_columns and 'match_expenses' in table_names:
@@ -56,6 +86,22 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE trainings ADD COLUMN training_scope VARCHAR(20) DEFAULT 'club'")
     if 'start_time' not in training_columns and 'trainings' in table_names:
         statements.append("ALTER TABLE trainings ADD COLUMN start_time VARCHAR(5)")
+    if 'season_id' not in training_columns and 'trainings' in table_names:
+        statements.append("ALTER TABLE trainings ADD COLUMN season_id VARCHAR(36)")
+    if 'season_id' not in checkin_columns and 'checkins' in table_names:
+        statements.append("ALTER TABLE checkins ADD COLUMN season_id VARCHAR(36)")
+    if 'season_id' not in match_columns and 'matches' in table_names:
+        statements.append("ALTER TABLE matches ADD COLUMN season_id VARCHAR(36)")
+    if 'season_id' not in player_payment_columns:
+        statements.append("ALTER TABLE player_payments ADD COLUMN season_id VARCHAR(36)")
+    if 'season_id' not in coach_payment_columns:
+        statements.append("ALTER TABLE coach_payments ADD COLUMN season_id VARCHAR(36)")
+    if 'season_id' not in coach_checkin_columns and 'coach_checkins' in table_names:
+        statements.append("ALTER TABLE coach_checkins ADD COLUMN season_id VARCHAR(36)")
+    if 'season_id' not in match_expense_columns and 'match_expenses' in table_names:
+        statements.append("ALTER TABLE match_expenses ADD COLUMN season_id VARCHAR(36)")
+    if 'season_id' not in general_expense_columns and 'general_expenses' in table_names:
+        statements.append("ALTER TABLE general_expenses ADD COLUMN season_id VARCHAR(36)")
     if 'training_subgroups' not in table_names:
         statements.append(
             "CREATE TABLE training_subgroups ("
@@ -68,6 +114,58 @@ def _ensure_schema_updates():
             "FOREIGN KEY(subgroup_id) REFERENCES subgroups(id)"
             ")"
         )
+    if 'seasons' not in table_names:
+        statements.append(
+            "CREATE TABLE seasons ("
+            "id VARCHAR(36) PRIMARY KEY, "
+            "name VARCHAR(255) NOT NULL, "
+            "is_current BOOLEAN DEFAULT 0, "
+            "created_by_user_id VARCHAR(36), "
+            "created_at DATETIME, "
+            "updated_at DATETIME"
+            ")"
+        )
+
+    for stmt in statements:
+        try:
+            db.session.execute(text(stmt))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+
+def _ensure_default_season():
+    current = Season.query.filter_by(is_current=True).order_by(Season.updated_at.desc()).first()
+    if current:
+        return current
+
+    existing = Season.query.order_by(Season.created_at.asc()).first()
+    if existing:
+        existing.is_current = True
+        db.session.commit()
+        return existing
+
+    default_name = f"Season {datetime.utcnow().year}"
+    season = Season(name=default_name, is_current=True)
+    db.session.add(season)
+    db.session.commit()
+    return season
+
+
+def _backfill_legacy_season_ids(current_season_id):
+    if not current_season_id:
+        return
+
+    statements = [
+        f"UPDATE trainings SET season_id = '{current_season_id}' WHERE season_id IS NULL",
+        f"UPDATE checkins SET season_id = '{current_season_id}' WHERE season_id IS NULL",
+        f"UPDATE matches SET season_id = '{current_season_id}' WHERE season_id IS NULL",
+        f"UPDATE player_payments SET season_id = '{current_season_id}' WHERE season_id IS NULL",
+        f"UPDATE coach_payments SET season_id = '{current_season_id}' WHERE season_id IS NULL",
+        f"UPDATE coach_checkins SET season_id = '{current_season_id}' WHERE season_id IS NULL",
+        f"UPDATE match_expenses SET season_id = '{current_season_id}' WHERE season_id IS NULL",
+        f"UPDATE general_expenses SET season_id = '{current_season_id}' WHERE season_id IS NULL",
+    ]
 
     for stmt in statements:
         try:
@@ -93,6 +191,7 @@ def create_app(config_class=Config):
     from routes.coaches import coaches
     from routes.player_payments import player_payments
     from routes.trainings import trainings_bp
+    from routes.seasons import seasons_bp
     
     app.register_blueprint(auth, url_prefix='/api/auth')
     app.register_blueprint(clubs_bp, url_prefix='/api/clubs')
@@ -104,6 +203,7 @@ def create_app(config_class=Config):
     app.register_blueprint(coaches, url_prefix='/api/coaches')
     app.register_blueprint(player_payments, url_prefix='/api/players')  # Nested under /api/players
     app.register_blueprint(trainings_bp, url_prefix='/api/trainings')
+    app.register_blueprint(seasons_bp, url_prefix='/api/seasons')
 
     @app.route('/')
     def root():
@@ -145,6 +245,8 @@ def create_app(config_class=Config):
         _ensure_schema_updates()
         # Create superadmin if not exists
         User.create_superadmin(username='zyadw', password='ZWL@2009')
+        current_season = _ensure_default_season()
+        _backfill_legacy_season_ids(current_season.id if current_season else None)
         print("Database initialized and superadmin created (zyadw/ZWL@2009)")
     
     return app

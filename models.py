@@ -9,6 +9,27 @@ def generate_uuid():
     return str(uuid.uuid4())
 
 
+class Season(db.Model):
+    __tablename__ = 'seasons'
+
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    name = db.Column(db.String(255), nullable=False)
+    is_current = db.Column(db.Boolean, default=False, nullable=False)
+    created_by_user_id = db.Column(db.String(36), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'isCurrent': bool(self.is_current),
+            'createdByUserId': self.created_by_user_id,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+            'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class Club(db.Model):
     __tablename__ = 'clubs'
     
@@ -56,6 +77,7 @@ class Subgroup(db.Model):
     subgroup_type = db.Column(db.String(20), nullable=False)  # 'academy' (أكاديمية) or 'club' (نادي)
     birth_year = db.Column(db.Integer, nullable=False)  # e.g., 2015, 2014
     monthly_amount = db.Column(db.Float, nullable=True)  # Academy monthly amount for subgroup
+    league_amount = db.Column(db.Float, nullable=True)  # Default league due for players in subgroup
     description = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -71,6 +93,7 @@ class Subgroup(db.Model):
             'subgroupType': self.subgroup_type,
             'birthYear': self.birth_year,
             'monthlyAmount': self.monthly_amount,
+            'leagueAmount': self.league_amount,
             'description': self.description,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
             'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
@@ -85,6 +108,7 @@ class Training(db.Model):
     name = db.Column(db.String(255), nullable=False)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
     subgroup_id = db.Column(db.String(36), db.ForeignKey('subgroups.id'), nullable=False)
+    season_id = db.Column(db.String(36), nullable=True)
     training_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy | first_team
     training_date = db.Column(db.Date, nullable=False)
     start_time = db.Column(db.String(5), nullable=True)  # HH:MM (optional)
@@ -122,6 +146,7 @@ class Training(db.Model):
             'name': self.name,
             'clubId': self.club_id,
             'subgroupId': self.subgroup_id,
+            'seasonId': self.season_id,
             'subgroupIds': subgroup_ids,
             'subgroupNames': self.assigned_subgroup_names(),
             'trainingScope': self.training_scope or 'club',
@@ -146,6 +171,7 @@ class Match(db.Model):
     
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    season_id = db.Column(db.String(36), nullable=True)
     match_type = db.Column(db.String(20), nullable=False)  # 'friendly' (ودي) or 'official' (رسمي)
     opponent_name = db.Column(db.String(255), nullable=False)  # اسم الفريق المنافس
     match_date = db.Column(db.Date, nullable=False)
@@ -164,6 +190,7 @@ class Match(db.Model):
         result = {
             'id': self.id,
             'clubId': self.club_id,
+            'seasonId': self.season_id,
             'matchType': self.match_type,
             'opponentName': self.opponent_name,
             'matchDate': self.match_date.isoformat() if self.match_date else None,
@@ -186,8 +213,13 @@ class Player(db.Model):
     full_name = db.Column(db.String(255), nullable=False)
     date_of_birth = db.Column(db.Date, nullable=True)
     payment_status = db.Column(db.String(20), default='unpaid')  # 'paid' or 'unpaid'
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    paused_at = db.Column(db.DateTime, nullable=True)
+    paused_amount_due = db.Column(db.Float, nullable=True)
+    paused_league_due = db.Column(db.Float, nullable=True)
     amount_due = db.Column(db.Float, nullable=True)  # Amount left to pay
     monthly_amount = db.Column(db.Float, nullable=True)  # Monthly academy fee
+    league_due = db.Column(db.Float, nullable=True)  # Remaining league subscription due
     renewal_day = db.Column(db.Integer, nullable=True)  # Day of month for auto renewal
     next_renewal_date = db.Column(db.Date, nullable=True)  # Next scheduled renewal date
     subscription_start_date = db.Column(db.Date, nullable=True)
@@ -226,8 +258,13 @@ class Player(db.Model):
             'fullName': self.full_name,
             'dateOfBirth': self.date_of_birth.isoformat() if self.date_of_birth else None,
             'paymentStatus': self.payment_status,
+            'isActive': bool(self.is_active),
+            'pausedAt': self.paused_at.isoformat() if self.paused_at else None,
             'amountDue': self.amount_due,
+            'pausedAmountDue': self.paused_amount_due,
             'monthlyAmount': self.monthly_amount,
+            'leagueDue': self.league_due,
+            'pausedLeagueDue': self.paused_league_due,
             'renewalDay': self.renewal_day,
             'nextRenewalDate': self.next_renewal_date.isoformat() if self.next_renewal_date else None,
             'subscriptionStartDate': self.subscription_start_date.isoformat() if self.subscription_start_date else None,
@@ -256,6 +293,7 @@ class CheckIn(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     player_id = db.Column(db.String(36), db.ForeignKey('players.id'), nullable=False)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=True)
+    season_id = db.Column(db.String(36), nullable=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     # Snapshot of player data at check-in time
     player_name = db.Column(db.String(255))
@@ -266,6 +304,7 @@ class CheckIn(db.Model):
             'id': self.id,
             'playerId': self.player_id,
             'clubId': self.club_id,
+            'seasonId': self.season_id,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
             'playerSnapshot': {
                 'fullName': self.player_name,
@@ -364,6 +403,8 @@ class Coach(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     full_name = db.Column(db.String(255), nullable=False)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    deactivated_at = db.Column(db.DateTime, nullable=True)
     monthly_salary = db.Column(db.Float, nullable=True)  # Monthly salary amount
     contact_info = db.Column(db.String(255), nullable=True)  # Phone, email, etc.
     notes = db.Column(db.Text, nullable=True)
@@ -383,6 +424,8 @@ class Coach(db.Model):
             'id': self.id,
             'fullName': self.full_name,
             'clubId': self.club_id,
+            'isActive': bool(self.is_active),
+            'deactivatedAt': self.deactivated_at.isoformat() if self.deactivated_at else None,
             'monthlySalary': self.monthly_salary,
             'contactInfo': self.contact_info,
             'notes': self.notes,
@@ -401,6 +444,7 @@ class CoachCheckIn(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     coach_id = db.Column(db.String(36), db.ForeignKey('coaches.id'), nullable=False)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=True)
+    season_id = db.Column(db.String(36), nullable=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     coach_name = db.Column(db.String(255))
 
@@ -409,6 +453,7 @@ class CoachCheckIn(db.Model):
             'id': self.id,
             'coachId': self.coach_id,
             'clubId': self.club_id,
+            'seasonId': self.season_id,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
             'coachSnapshot': {
                 'fullName': self.coach_name,
@@ -422,6 +467,7 @@ class CoachPayment(db.Model):
     
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     coach_id = db.Column(db.String(36), db.ForeignKey('coaches.id'), nullable=False)
+    season_id = db.Column(db.String(36), nullable=True)
     amount = db.Column(db.Float, nullable=False)
     payment_date = db.Column(db.Date, nullable=False)
     payment_month = db.Column(db.String(7), nullable=False)  # Format: YYYY-MM (e.g., "2026-04")
@@ -433,6 +479,7 @@ class CoachPayment(db.Model):
         return {
             'id': self.id,
             'coachId': self.coach_id,
+            'seasonId': self.season_id,
             'amount': self.amount,
             'paymentDate': self.payment_date.isoformat() if self.payment_date else None,
             'paymentMonth': self.payment_month,
@@ -448,6 +495,7 @@ class PlayerPayment(db.Model):
     
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     player_id = db.Column(db.String(36), db.ForeignKey('players.id'), nullable=False)
+    season_id = db.Column(db.String(36), nullable=True)
     amount_paid = db.Column(db.Float, nullable=False)  # Amount received FROM player
     revenue_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
     payment_type = db.Column(db.String(30), nullable=True)  # league_subscription | monthly_subscription | clothing_bag
@@ -459,6 +507,7 @@ class PlayerPayment(db.Model):
         return {
             'id': self.id,
             'playerId': self.player_id,
+            'seasonId': self.season_id,
             'amountPaid': self.amount_paid,
             'revenueScope': self.revenue_scope,
             'paymentType': self.payment_type,
@@ -475,6 +524,7 @@ class MatchExpense(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
     match_id = db.Column(db.String(36), db.ForeignKey('matches.id'), nullable=False)
+    season_id = db.Column(db.String(36), nullable=True)
     expense_type = db.Column(db.String(30), nullable=False)  # transportation | ambulance | field_rent
     expense_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
     amount = db.Column(db.Float, nullable=False)
@@ -488,6 +538,7 @@ class MatchExpense(db.Model):
             'id': self.id,
             'clubId': self.club_id,
             'matchId': self.match_id,
+            'seasonId': self.season_id,
             'expenseType': self.expense_type,
             'expenseScope': self.expense_scope,
             'amount': self.amount,
@@ -508,6 +559,7 @@ class GeneralExpense(db.Model):
 
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    season_id = db.Column(db.String(36), nullable=True)
     expense_type = db.Column(db.String(40), nullable=False)  # training_field_rent | clothing
     expense_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
     amount = db.Column(db.Float, nullable=False)
@@ -520,6 +572,7 @@ class GeneralExpense(db.Model):
         return {
             'id': self.id,
             'clubId': self.club_id,
+            'seasonId': self.season_id,
             'expenseType': self.expense_type,
             'expenseScope': self.expense_scope,
             'amount': self.amount,

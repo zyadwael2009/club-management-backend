@@ -1,8 +1,39 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, Subgroup, Club, User, Player
+from sqlalchemy import func, and_, or_
+from models import db, Subgroup, Club, User, Player, PlayerPayment
 from routes.auth import login_required, admin_or_superadmin_required
+from season_context import get_effective_season_id
 
 subgroups_bp = Blueprint('subgroups', __name__)
+
+
+def _get_player_league_revenue_totals(player_ids, season_id=None):
+    """Return league subscription revenues grouped by player for the active scope."""
+    if not player_ids:
+        return {}
+
+    query = (
+        db.session.query(
+            PlayerPayment.player_id,
+            func.coalesce(func.sum(PlayerPayment.amount_paid), 0.0),
+        )
+        .filter(PlayerPayment.player_id.in_(player_ids))
+        .filter(
+            or_(
+                PlayerPayment.payment_type == 'league_subscription',
+                and_(
+                    PlayerPayment.payment_type.is_(None),
+                    PlayerPayment.revenue_scope != 'academy',
+                ),
+            )
+        )
+    )
+
+    if season_id:
+        query = query.filter(PlayerPayment.season_id == season_id)
+
+    rows = query.group_by(PlayerPayment.player_id).all()
+    return {player_id: float(total or 0.0) for player_id, total in rows}
 
 
 @subgroups_bp.route('/', methods=['GET'])
@@ -81,6 +112,17 @@ def create_subgroup():
     else:
         monthly_amount = None
 
+    league_amount = data.get('leagueAmount')
+    if league_amount not in [None, '']:
+        try:
+            league_amount = float(league_amount)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'مبلغ اشتراك الدوري غير صالح'}), 400
+        if league_amount < 0:
+            return jsonify({'error': 'مبلغ اشتراك الدوري لا يمكن أن يكون أقل من صفر'}), 400
+    else:
+        league_amount = None
+
     if data.get('subgroupType') == 'academy' and monthly_amount is None:
         return jsonify({'error': 'المبلغ الشهري مطلوب لمجموعة الأكاديمية'}), 400
     
@@ -109,6 +151,7 @@ def create_subgroup():
         subgroup_type=data['subgroupType'],
         birth_year=birth_year,
         monthly_amount=monthly_amount,
+        league_amount=league_amount,
         description=data.get('description')
     )
     
@@ -157,6 +200,19 @@ def update_subgroup(subgroup_id):
             if subgroup.monthly_amount <= 0:
                 return jsonify({'error': 'المبلغ الشهري يجب أن يكون أكبر من صفر'}), 400
 
+    league_amount_updated = False
+    if 'leagueAmount' in data:
+        league_amount_updated = True
+        if data['leagueAmount'] in ['', None]:
+            subgroup.league_amount = None
+        else:
+            try:
+                subgroup.league_amount = float(data['leagueAmount'])
+            except (TypeError, ValueError):
+                return jsonify({'error': 'مبلغ اشتراك الدوري غير صالح'}), 400
+            if subgroup.league_amount < 0:
+                return jsonify({'error': 'مبلغ اشتراك الدوري لا يمكن أن يكون أقل من صفر'}), 400
+
     if subgroup.subgroup_type == 'academy' and (subgroup.monthly_amount is None or subgroup.monthly_amount <= 0):
         return jsonify({'error': 'المبلغ الشهري مطلوب لمجموعة الأكاديمية'}), 400
 
@@ -165,6 +221,29 @@ def update_subgroup(subgroup_id):
         players = Player.query.filter_by(subgroup_id=subgroup.id).all()
         for player in players:
             player.monthly_amount = subgroup.monthly_amount
+
+    if league_amount_updated:
+        players = Player.query.filter_by(subgroup_id=subgroup.id).all()
+        season_id = get_effective_season_id(default_to_current=True)
+        league_total = max(0.0, float(subgroup.league_amount or 0.0))
+        league_paid_by_player = _get_player_league_revenue_totals(
+            [player.id for player in players],
+            season_id=season_id,
+        )
+
+        for player in players:
+            current_total_due = max(0.0, float(player.amount_due or 0.0))
+            current_league_due = max(0.0, float(player.league_due or 0.0))
+            if current_league_due > current_total_due:
+                current_league_due = current_total_due
+
+            monthly_outstanding_due = max(0.0, current_total_due - current_league_due)
+            paid_league_revenue = max(0.0, float(league_paid_by_player.get(player.id, 0.0)))
+            remaining_league_due = max(0.0, league_total - paid_league_revenue)
+
+            player.league_due = remaining_league_due
+            player.amount_due = monthly_outstanding_due + remaining_league_due
+            player.payment_status = 'paid' if float(player.amount_due or 0.0) <= 0 else 'unpaid'
     
     db.session.commit()
     return jsonify(subgroup.to_dict())

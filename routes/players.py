@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, Player, User, Coach, Subgroup, Club
+from models import db, Player, User, Coach, Subgroup, Club, PlayerPayment
 from routes.auth import login_required, admin_or_superadmin_required
+from season_context import get_effective_season_id
 from datetime import datetime, date
 import calendar
 
@@ -36,6 +37,22 @@ def _resolve_monthly_amount(subgroup, club, current_player_monthly=None, request
     return 0.0
 
 
+def _resolve_league_due(subgroup, current_player_league=None, requested_league=None, legacy_amount_due=None):
+    if requested_league is not None:
+        return max(0.0, float(requested_league))
+
+    if legacy_amount_due is not None:
+        return max(0.0, float(legacy_amount_due))
+
+    if current_player_league is not None:
+        return max(0.0, float(current_player_league or 0.0))
+
+    subgroup_league = float(subgroup.league_amount or 0.0) if subgroup else 0.0
+    if subgroup_league > 0:
+        return subgroup_league
+    return 0.0
+
+
 def _parse_optional_monthly_amount(raw_value):
     if raw_value is None or raw_value == '':
         return None
@@ -51,7 +68,27 @@ def _parse_optional_monthly_amount(raw_value):
     return value
 
 
+def _parse_optional_league_due(raw_value):
+    if raw_value is None or raw_value == '':
+        return None
+
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError('مبلغ اشتراك الدوري غير صالح')
+
+    if value < 0:
+        raise ValueError('مبلغ اشتراك الدوري لا يمكن أن يكون أقل من صفر')
+
+    return value
+
+
 def _apply_player_renewals(player, today=None):
+    if not bool(player.is_active):
+        if player.payment_status != 'inactive':
+            player.payment_status = 'inactive'
+            return True
+        return False
     current_date = today or date.today()
     subgroup = player.subgroup
     club = player.club
@@ -59,6 +96,8 @@ def _apply_player_renewals(player, today=None):
 
     stored_monthly = player.monthly_amount
     resolved_monthly = float(stored_monthly or 0.0)
+    stored_league_due = player.league_due
+    resolved_league_due = float(stored_league_due or 0.0)
 
     # Backfill legacy rows that relied on subgroup/club defaults and had null monthly value.
     if stored_monthly is None:
@@ -68,27 +107,88 @@ def _apply_player_renewals(player, today=None):
             player.monthly_amount = derived_monthly
             changed = True
 
+    if stored_league_due is None:
+        if resolved_monthly > 0:
+            total_due = float(player.amount_due or 0.0)
+            resolved_league_due = max(0.0, total_due - resolved_monthly)
+        else:
+            resolved_league_due = max(0.0, float(player.amount_due or 0.0))
+        if player.amount_due is not None or resolved_league_due > 0:
+            player.league_due = resolved_league_due
+            changed = True
+
+    if player.amount_due is not None and float(player.league_due or 0.0) > float(player.amount_due or 0.0):
+        player.league_due = max(0.0, float(player.amount_due or 0.0))
+        resolved_league_due = float(player.league_due or 0.0)
+        changed = True
+
     if resolved_monthly <= 0:
+        if player.amount_due is not None:
+            normalized = max(0.0, float(player.amount_due or 0.0))
+            if float(player.league_due or 0.0) != normalized:
+                player.league_due = normalized
+                changed = True
         return changed
+
+    # Monthly subscription status is determined by payments of the current month.
+    season_id = get_effective_season_id(default_to_current=True)
+    month_start = date(current_date.year, current_date.month, 1)
+    month_end = _add_one_month_keep_day(month_start, 1)
+    monthly_query = PlayerPayment.query.filter_by(
+        player_id=player.id,
+        payment_type='monthly_subscription',
+    ).filter(
+        PlayerPayment.payment_date >= month_start,
+        PlayerPayment.payment_date < month_end,
+    )
+    if season_id:
+        monthly_query = monthly_query.filter_by(season_id=season_id)
+    has_current_month_payment = monthly_query.first() is not None
 
     if not player.subscription_end_date:
         base_start = player.subscription_start_date or (player.created_at.date() if player.created_at else current_date)
         player.subscription_start_date = base_start
         player.subscription_end_date = _add_one_month_keep_day(base_start, base_start.day)
         changed = True
-        return changed
-
-    if player.subscription_end_date < current_date:
-        if player.payment_status != 'unpaid':
-            player.payment_status = 'unpaid'
-            changed = True
-
-        if float(player.amount_due or 0.0) <= 0:
-            player.amount_due = resolved_monthly
-            changed = True
-        return changed
+    monthly_due_component = 0.0 if has_current_month_payment else float(resolved_monthly)
+    expected_total_due = monthly_due_component + float(resolved_league_due)
+    if float(player.amount_due or 0.0) != expected_total_due:
+        player.amount_due = expected_total_due
+        changed = True
+    expected_status = 'paid' if expected_total_due <= 0 else 'unpaid'
+    if player.payment_status != expected_status:
+        player.payment_status = expected_status
+        changed = True
 
     return changed
+
+
+def _set_player_active_state(player, make_active):
+    player.is_active = bool(make_active)
+    player.updated_at = datetime.utcnow()
+
+    if not make_active:
+        if player.paused_amount_due is None:
+            player.paused_amount_due = max(0.0, float(player.amount_due or 0.0))
+        if player.paused_league_due is None:
+            player.paused_league_due = max(0.0, float(player.league_due or 0.0))
+        player.paused_at = datetime.utcnow()
+        player.amount_due = 0.0
+        player.league_due = 0.0
+        player.payment_status = 'inactive'
+        return
+
+    restored_amount_due = max(0.0, float(player.paused_amount_due or 0.0))
+    restored_league_due = max(0.0, float(player.paused_league_due or 0.0))
+    if restored_league_due > restored_amount_due:
+        restored_league_due = restored_amount_due
+
+    player.amount_due = restored_amount_due
+    player.league_due = restored_league_due
+    player.payment_status = 'paid' if restored_amount_due <= 0 else 'unpaid'
+    player.paused_amount_due = None
+    player.paused_league_due = None
+    player.paused_at = None
 
 
 @players_bp.route('', methods=['GET'])
@@ -180,6 +280,7 @@ def get_today_renewals():
         .filter(Subgroup.subgroup_type == 'academy')
         .filter(Player.monthly_amount.isnot(None))
         .filter(Player.monthly_amount > 0)
+        .filter(Player.is_active == True)
         .filter(Player.subscription_end_date == today)
         .order_by(Player.full_name.asc())
         .all()
@@ -193,6 +294,7 @@ def get_today_renewals():
             'id': player.id,
             'fullName': player.full_name,
             'monthlyAmount': float(player.monthly_amount or 0.0),
+            'leagueDue': float(player.league_due or 0.0),
             'amountDue': float(player.amount_due or 0.0),
             'subgroupName': subgroup.name,
             'renewalDay': player.renewal_day,
@@ -206,6 +308,25 @@ def get_today_renewals():
         'totalAmount': total,
         'players': payload,
     })
+
+
+@players_bp.route('/<player_id>/toggle-active', methods=['PUT'])
+@admin_or_superadmin_required
+def toggle_player_active(player_id):
+    player = Player.query.get_or_404(player_id)
+    current_user = User.query.get(session['user_id'])
+
+    if current_user.role == 'admin' and player.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا اللاعب'}), 403
+
+    data = request.get_json() or {}
+    make_active = data.get('isActive')
+    if make_active is None:
+        make_active = not bool(player.is_active)
+
+    _set_player_active_state(player, bool(make_active))
+    db.session.commit()
+    return jsonify(player.to_dict())
 
 
 @players_bp.route('/qr/<qr_code>', methods=['GET'])
@@ -309,6 +430,11 @@ def create_player():
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
 
+    try:
+        requested_league_due = _parse_optional_league_due(data.get('leagueDue'))
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
     monthly_amount = _resolve_monthly_amount(
         subgroup,
         club,
@@ -339,15 +465,23 @@ def create_player():
         renewal_day = None
         next_renewal_date = None
         raw_amount_due = data.get('amountDue')
-        amount_due = float(raw_amount_due) if raw_amount_due is not None else None
+        legacy_amount_due = float(raw_amount_due) if raw_amount_due is not None else None
+        if legacy_amount_due is not None and legacy_amount_due < 0:
+            legacy_amount_due = 0.0
+        league_due = _resolve_league_due(
+            subgroup,
+            requested_league=requested_league_due,
+            legacy_amount_due=legacy_amount_due,
+        )
+
+        amount_due = None
         payment_status = data.get('paymentStatus', 'unpaid')
         if is_monthly_player:
-            # Preserve extra due entered by user and add monthly subscription component.
-            additional_due = float(amount_due or 0.0)
-            if additional_due < 0:
-                additional_due = 0.0
-            amount_due = float(monthly_amount) + additional_due
+            amount_due = float(monthly_amount) + float(league_due)
             payment_status = 'unpaid'
+        else:
+            amount_due = float(league_due)
+            payment_status = 'paid' if amount_due <= 0 else 'unpaid'
 
         player = Player(
             full_name=data['fullName'],
@@ -355,6 +489,7 @@ def create_player():
             payment_status=payment_status,
             amount_due=amount_due,
             monthly_amount=stored_monthly_amount,
+            league_due=league_due,
             renewal_day=renewal_day,
             next_renewal_date=next_renewal_date,
             subscription_start_date=subscription_start_date,
@@ -365,7 +500,10 @@ def create_player():
             club_id=club_id,
             subgroup_id=subgroup_id,
             pin=data.get('pin'),
+            is_active=bool(data.get('isActive', True)),
         )
+        if not player.is_active:
+            _set_player_active_state(player, False)
         
         db.session.add(player)
         db.session.flush()  # Get the player ID
@@ -417,12 +555,23 @@ def update_player(player_id):
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
 
+    try:
+        requested_league_due = _parse_optional_league_due(data.get('leagueDue'))
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
     resolved_monthly = _resolve_monthly_amount(
         subgroup_for_update,
         club_for_update,
         player.monthly_amount,
         requested_monthly,
     )
+    existing_total_due = max(0.0, float(player.amount_due or 0.0))
+    existing_league_due = max(0.0, float(player.league_due or 0.0))
+    if existing_league_due > existing_total_due:
+        existing_league_due = existing_total_due
+    existing_monthly_outstanding_due = max(0.0, existing_total_due - existing_league_due)
+
     is_monthly_player = resolved_monthly > 0
     subscription_start = data.get('subscriptionStartDate')
     subscription_end = data.get('subscriptionEndDate')
@@ -433,14 +582,23 @@ def update_player(player_id):
         player.date_of_birth = datetime.fromisoformat(data['dateOfBirth']).date() if data['dateOfBirth'] else None
     if 'paymentStatus' in data:
         player.payment_status = data['paymentStatus']
+
+    due_override = None
     if 'amountDue' in data:
-        if is_monthly_player:
-            additional_due = float(data['amountDue'] or 0.0)
-            if additional_due < 0:
-                additional_due = 0.0
-            player.amount_due = float(resolved_monthly or 0.0) + additional_due
-        else:
-            player.amount_due = data['amountDue']
+        try:
+            due_override = float(data['amountDue'] or 0.0)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'المبلغ المستحق غير صالح'}), 400
+        if due_override < 0:
+            due_override = 0.0
+
+    league_due_override = None
+    if requested_league_due is not None:
+        league_due_override = requested_league_due
+    elif due_override is not None:
+        # Backward compatibility: amountDue for monthly players represented extra due.
+        league_due_override = due_override
+
     if 'notes' in data:
         player.notes = data['notes']
     if 'phoneNumber' in data:
@@ -453,6 +611,8 @@ def update_player(player_id):
         player.subgroup_id = data['subgroupId']
     if 'pin' in data:
         player.pin = data['pin']
+    if 'isActive' in data:
+        _set_player_active_state(player, bool(data['isActive']))
 
     username_payload_present = 'username' in data
     password_payload_present = 'password' in data
@@ -504,6 +664,23 @@ def update_player(player_id):
     if is_monthly_player:
         player.monthly_amount = resolved_monthly
 
+        if league_due_override is not None:
+            player.league_due = max(0.0, float(league_due_override))
+            if due_override is not None:
+                requested_total_due = max(0.0, float(due_override))
+                if requested_total_due < float(player.league_due or 0.0):
+                    requested_total_due = float(player.league_due or 0.0)
+                player.amount_due = requested_total_due
+            else:
+                player.amount_due = existing_monthly_outstanding_due + float(player.league_due or 0.0)
+        else:
+            if player.league_due is None:
+                inferred_league_due = max(
+                    0.0,
+                    float(player.amount_due or 0.0) - float(resolved_monthly or 0.0),
+                )
+                player.league_due = inferred_league_due
+
         if subscription_start is not None:
             player.subscription_start_date = datetime.fromisoformat(subscription_start).date() if subscription_start else None
         if subscription_end is not None:
@@ -526,7 +703,7 @@ def update_player(player_id):
 
         # Monthly players payment status must follow due amount and revenues.
         if player.amount_due is None:
-            player.amount_due = float(player.monthly_amount or 0.0)
+            player.amount_due = float(player.monthly_amount or 0.0) + float(player.league_due or 0.0)
         player.payment_status = 'paid' if float(player.amount_due or 0.0) <= 0 else 'unpaid'
 
         player.renewal_day = None
@@ -540,8 +717,20 @@ def update_player(player_id):
             player.monthly_amount = 0.0
         else:
             player.monthly_amount = None
+
+        if league_due_override is not None:
+            player.league_due = max(0.0, float(league_due_override))
+            player.amount_due = float(player.league_due or 0.0)
+        elif player.amount_due is not None:
+            player.league_due = max(0.0, float(player.amount_due or 0.0))
+        elif player.league_due is None:
+            player.league_due = 0.0
+
         player.subscription_start_date = None
         player.subscription_end_date = None
+
+        if player.amount_due is not None:
+            player.payment_status = 'paid' if float(player.amount_due or 0.0) <= 0 else 'unpaid'
     
     player.updated_at = datetime.utcnow()
     db.session.commit()

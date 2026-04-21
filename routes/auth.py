@@ -1,9 +1,17 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, User, Club
+from models import db, User, Club, Season
 from functools import wraps
 from datetime import datetime, date
 
 auth = Blueprint('auth', __name__)
+
+
+def _current_season_id():
+    current = Season.query.filter_by(is_current=True).order_by(Season.updated_at.desc()).first()
+    if current:
+        return current.id
+    fallback = Season.query.order_by(Season.created_at.desc()).first()
+    return fallback.id if fallback else None
 
 
 def _deactivate_club_accounts_if_due(club):
@@ -112,6 +120,7 @@ def login():
     
     # Include related data based on role
     response_data = user.to_dict()
+    response_data['currentSeasonId'] = _current_season_id()
     
     if user.role == 'admin' and user.club_id:
         club = Club.query.get(user.club_id)
@@ -144,6 +153,7 @@ def get_current_user():
         return state_error
     
     response_data = user.to_dict()
+    response_data['currentSeasonId'] = _current_season_id()
     
     # Include related data based on role
     if user.role == 'admin' and user.club_id:

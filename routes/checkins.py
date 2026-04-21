@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, CheckIn, Player, User, Training, CheckInTraining, TrainingSubgroup
 from routes.auth import login_required
+from season_context import get_effective_season_id
 from datetime import datetime, date, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -88,6 +89,7 @@ def get_checkins():
     current_user = User.query.get(session['user_id'])
     club_id = request.args.get('club_id')
     limit = request.args.get('limit', 50, type=int)
+    season_id = get_effective_season_id(default_to_current=True)
     
     query = CheckIn.query
     
@@ -104,6 +106,9 @@ def get_checkins():
         # Superadmin can filter by club
         if club_id:
             query = query.filter_by(club_id=club_id)
+
+    if season_id:
+        query = query.filter_by(season_id=season_id)
     
     checkins = query.order_by(CheckIn.timestamp.desc()).limit(limit).all()
     return jsonify(_append_training_info(checkins))
@@ -128,8 +133,13 @@ def get_player_checkins(player_id):
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     
     limit = request.args.get('limit', 20, type=int)
+    season_id = get_effective_season_id(default_to_current=True)
     
-    checkins = CheckIn.query.filter_by(player_id=player_id)\
+    checkins_query = CheckIn.query.filter_by(player_id=player_id)
+    if season_id:
+        checkins_query = checkins_query.filter_by(season_id=season_id)
+
+    checkins = checkins_query\
         .order_by(CheckIn.timestamp.desc())\
         .limit(limit).all()
 
@@ -141,6 +151,7 @@ def get_player_checkins(player_id):
 def create_checkin():
     """Create a new check-in"""
     data = request.get_json()
+    season_id = get_effective_season_id(default_to_current=True)
     
     if not data or not data.get('playerId'):
         return jsonify({'error': 'معرف اللاعب مطلوب'}), 400
@@ -152,6 +163,8 @@ def create_checkin():
     player = Player.query.get(data['playerId'])
     if not player:
         return jsonify({'error': 'اللاعب غير موجود'}), 404
+    if not bool(player.is_active):
+        return jsonify({'error': 'لا يمكن تسجيل حضور لاعب غير نشط'}), 400
     
     current_user = User.query.get(session['user_id'])
     
@@ -164,6 +177,9 @@ def create_checkin():
     training = Training.query.get(data['trainingId'])
     if not training:
         return jsonify({'error': 'التدريب غير موجود'}), 404
+
+    if season_id and training.season_id and training.season_id != season_id:
+        return jsonify({'error': 'التدريب لا يتبع الموسم المحدد'}), 400
 
     if training.club_id != player.club_id:
         return jsonify({'error': 'التدريب لا يتبع نفس نادي اللاعب'}), 400
@@ -187,6 +203,7 @@ def create_checkin():
         CheckIn.id == CheckInTraining.checkin_id,
     ).filter(
         CheckIn.player_id == player.id,
+        CheckIn.season_id == season_id if season_id else True,
         CheckInTraining.training_id == training.id,
     ).first()
     if existing_link:
@@ -195,6 +212,7 @@ def create_checkin():
     checkin = CheckIn(
         player_id=data['playerId'],
         club_id=data.get('clubId') or player.club_id,
+        season_id=season_id,
         player_name=player.full_name,
         player_payment_status=player.payment_status,
     )

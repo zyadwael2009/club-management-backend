@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Training, Subgroup, User, Player, CheckIn, CheckInTraining, TrainingSubgroup
 from routes.auth import login_required, admin_or_superadmin_required
+from season_context import get_effective_season_id
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import or_
@@ -59,6 +60,7 @@ def list_trainings():
     current_user = User.query.get(session['user_id'])
     club_id = request.args.get('club_id')
     subgroup_id = request.args.get('subgroup_id')
+    season_id = get_effective_season_id(default_to_current=True)
 
     query = Training.query
 
@@ -82,6 +84,9 @@ def list_trainings():
     elif club_id:
         query = query.filter_by(club_id=club_id)
 
+    if season_id:
+        query = query.filter_by(season_id=season_id)
+
     if subgroup_id:
         query = query.outerjoin(
             TrainingSubgroup,
@@ -103,6 +108,7 @@ def create_training():
     """Create a training session assigned to one or more subgroups."""
     current_user = User.query.get(session['user_id'])
     data = request.get_json() or {}
+    season_id = get_effective_season_id(default_to_current=True)
 
     club_id = data.get('clubId')
     subgroup_ids = data.get('subgroupIds')
@@ -149,6 +155,7 @@ def create_training():
             name=name,
             club_id=club_id,
             subgroup_id=primary_subgroup_id,
+            season_id=season_id,
             training_scope=training_scope,
             training_date=parsed_date,
             start_time=start_time,
@@ -197,6 +204,7 @@ def get_training_attendance(training_id):
         CheckInTraining.checkin_id == CheckIn.id,
     ).filter(
         CheckInTraining.training_id == training.id,
+        CheckIn.season_id == training.season_id if training.season_id else True,
     ).order_by(CheckIn.timestamp.desc()).all()
 
     latest_checkin_by_player = {}

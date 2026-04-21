@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, Club, User, Player, Subgroup, Training, CheckIn, PlayerPayment
+from models import db, Club, User, Player, Subgroup, Training, CheckIn, PlayerPayment, Season
 from routes.auth import superadmin_required, login_required
+from season_context import get_effective_season_id
 from datetime import datetime
 
 clubs_bp = Blueprint('clubs', __name__)
@@ -205,23 +206,40 @@ def get_clubs_data_presence():
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
 
     clubs = Club.query.order_by(Club.created_at.desc()).all()
+    current_season = Season.query.filter_by(is_current=True).order_by(Season.updated_at.desc()).first()
+    season_id = get_effective_season_id(default_to_current=True)
     result = []
     for club in clubs:
         player_count = Player.query.filter_by(club_id=club.id).count()
         subgroup_count = Subgroup.query.filter_by(club_id=club.id).count()
-        training_count = Training.query.filter_by(club_id=club.id).count()
-        checkin_count = CheckIn.query.filter_by(club_id=club.id).count()
-        payment_count = (
+
+        trainings_query = Training.query.filter_by(club_id=club.id)
+        if season_id:
+            trainings_query = trainings_query.filter_by(season_id=season_id)
+        training_count = trainings_query.count()
+
+        checkins_query = CheckIn.query.filter_by(club_id=club.id)
+        if season_id:
+            checkins_query = checkins_query.filter_by(season_id=season_id)
+        checkin_count = checkins_query.count()
+
+        payments_query = (
             db.session.query(PlayerPayment)
             .join(Player, PlayerPayment.player_id == Player.id)
             .filter(Player.club_id == club.id)
-            .count()
+        )
+        if season_id:
+            payments_query = payments_query.filter(PlayerPayment.season_id == season_id)
+        payment_count = (
+            payments_query.count()
         )
 
         result.append({
             'clubId': club.id,
             'clubName': club.name,
             'isActive': bool(club.is_active),
+            'currentSeasonId': current_season.id if current_season else None,
+            'appliedSeasonId': season_id,
             'players': player_count,
             'subgroups': subgroup_count,
             'trainings': training_count,
