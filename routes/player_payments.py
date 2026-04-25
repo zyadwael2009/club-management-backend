@@ -168,6 +168,8 @@ def get_player_payments(player_id):
     # Check permissions
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    elif current_user.role == 'branch_manager' and player.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif current_user.role == 'player' and current_user.player_id != player_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     
@@ -187,6 +189,8 @@ def get_club_player_payments(club_id):
 
     if current_user.role == 'admin' and current_user.club_id != club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'branch_manager' and current_user.club_id != club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     if current_user.role == 'coach' and current_user.club_id != club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     if current_user.role == 'player':
@@ -202,6 +206,8 @@ def get_club_player_payments(club_id):
         .order_by(PlayerPayment.payment_date.desc())
         .all()
     )
+    if current_user.role == 'branch_manager':
+        rows = [(payment, player) for payment, player in rows if payment.branch_id == current_user.branch_id]
 
     result = []
     for payment, player in rows:
@@ -231,6 +237,8 @@ def add_player_payment(player_id):
     
     # Admin can only add payments for their club's players
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لإضافة دفعات لهذا اللاعب'}), 403
+    if current_user.role == 'branch_manager' and player.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة دفعات لهذا اللاعب'}), 403
     
     data = request.json
@@ -289,6 +297,7 @@ def add_player_payment(player_id):
 
         payment = PlayerPayment(
             player_id=player_id,
+            branch_id=player.branch_id,
             season_id=season_id,
             amount_paid=amount_paid,
             revenue_scope=revenue_scope,
@@ -328,6 +337,8 @@ def delete_player_payment(player_id, payment_id):
     
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لحذف هذه الدفعة'}), 403
+    if current_user.role == 'branch_manager' and player.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية لحذف هذه الدفعة'}), 403
     
     try:
         _apply_player_renewals(player)
@@ -357,6 +368,8 @@ def get_player_payment_summary(player_id):
     
     # Check permissions
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    elif current_user.role == 'branch_manager' and player.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif current_user.role == 'player' and current_user.player_id != player_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
@@ -447,6 +460,8 @@ def update_player_payment(player_id, payment_id):
 
     current_user = User.query.get(session['user_id'])
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لتعديل هذه الدفعة'}), 403
+    if current_user.role == 'branch_manager' and player.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية لتعديل هذه الدفعة'}), 403
 
     data = request.json or {}

@@ -64,8 +64,8 @@ def admin_or_superadmin_required(f):
             return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 401
         
         user = User.query.get(session['user_id'])
-        if not user or user.role not in ['admin', 'superadmin']:
-            return jsonify({'error': 'يجب أن تكون مدير أو مدير عام'}), 403
+        if not user or user.role not in ['admin', 'superadmin', 'branch_manager']:
+            return jsonify({'error': 'يجب أن تكون مديراً أو مدير فرع أو مديراً عاماً'}), 403
 
         state_error = _enforce_user_and_club_state(user)
         if state_error:
@@ -125,6 +125,9 @@ def login():
     if user.role == 'admin' and user.club_id:
         club = Club.query.get(user.club_id)
         response_data['club'] = club.to_dict() if club else None
+    elif user.role == 'branch_manager' and user.club_id:
+        club = Club.query.get(user.club_id)
+        response_data['club'] = club.to_dict() if club else None
     
     return jsonify(response_data), 200
 
@@ -157,6 +160,9 @@ def get_current_user():
     
     # Include related data based on role
     if user.role == 'admin' and user.club_id:
+        club = Club.query.get(user.club_id)
+        response_data['club'] = club.to_dict() if club else None
+    elif user.role == 'branch_manager' and user.club_id:
         club = Club.query.get(user.club_id)
         response_data['club'] = club.to_dict() if club else None
     

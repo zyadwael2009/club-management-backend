@@ -16,7 +16,7 @@ def get_clubs():
     if current_user.role == 'superadmin':
         # Superadmin sees all clubs
         clubs = Club.query.order_by(Club.created_at.desc()).all()
-    elif current_user.role == 'admin':
+    elif current_user.role in ['admin', 'branch_manager']:
         # Admin sees only their club
         clubs = Club.query.filter_by(id=current_user.club_id).all()
     else:
@@ -36,6 +36,8 @@ def get_club(club_id):
     
     # Check permissions
     if current_user.role == 'admin' and club.id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'branch_manager' and club.id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     
     return jsonify(club.to_dict())

@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Match, MatchExpense, GeneralExpense, Player, Club, User
 from routes.auth import login_required, admin_or_superadmin_required
+from branch_scope import effective_branch_id_for_user
 from season_context import get_effective_season_id
 from datetime import datetime
 
@@ -17,9 +18,12 @@ def get_matches():
     season_id = get_effective_season_id(default_to_current=True)
     
     query = Match.query
+    branch_id = effective_branch_id_for_user(current_user)
     
     # Role-based filtering
     if current_user.role == 'admin':
+        query = query.filter_by(club_id=current_user.club_id)
+    elif current_user.role == 'branch_manager':
         query = query.filter_by(club_id=current_user.club_id)
     elif current_user.role == 'coach':
         if current_user.club_id:
@@ -36,6 +40,8 @@ def get_matches():
         # Superadmin can filter by club
         if club_id:
             query = query.filter_by(club_id=club_id)
+    if branch_id:
+        query = query.filter_by(branch_id=branch_id)
 
     if season_id:
         query = query.filter_by(season_id=season_id)
@@ -59,6 +65,8 @@ def get_match(match_id):
     
     # Check permissions
     if current_user.role == 'admin' and match.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    elif current_user.role == 'branch_manager' and match.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif current_user.role == 'coach' and match.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
@@ -88,6 +96,9 @@ def create_match():
     # Admin can only create matches for their club
     if current_user.role == 'admin' and data['clubId'] != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مباريات لهذا النادي'}), 403
+    if current_user.role == 'branch_manager' and data['clubId'] != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لإضافة مباريات لهذا النادي'}), 403
+    branch_id = effective_branch_id_for_user(current_user)
     
     if not data.get('matchType'):
         return jsonify({'error': 'نوع المباراة مطلوب (ودي أو رسمي)'}), 400
@@ -105,6 +116,7 @@ def create_match():
     
     match = Match(
         club_id=data['clubId'],
+        branch_id=branch_id,
         season_id=season_id,
         match_type=data['matchType'],
         opponent_name=data['opponentName'],
@@ -140,6 +152,8 @@ def update_match(match_id):
     
     # Admin can only update their club's matches
     if current_user.role == 'admin' and match.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لتعديل هذه المباراة'}), 403
+    if current_user.role == 'branch_manager' and match.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية لتعديل هذه المباراة'}), 403
     
     data = request.get_json()
@@ -187,6 +201,8 @@ def delete_match(match_id):
     # Admin can only delete their club's matches
     if current_user.role == 'admin' and match.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لحذف هذه المباراة'}), 403
+    if current_user.role == 'branch_manager' and match.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية لحذف هذه المباراة'}), 403
     
     db.session.delete(match)
     db.session.commit()
@@ -195,7 +211,13 @@ def delete_match(match_id):
 
 
 @matches_bp.route('/club/<club_id>', methods=['GET'])
+@login_required
 def get_club_matches(club_id):
+    current_user = User.query.get(session['user_id'])
+    if current_user.role == 'admin' and current_user.club_id != club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'branch_manager' and current_user.club_id != club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     """Get all matches for a specific club"""
     club = Club.query.get(club_id)
     if not club:
@@ -206,6 +228,8 @@ def get_club_matches(club_id):
     if season_id:
         query = query.filter_by(season_id=season_id)
     matches = query.order_by(Match.match_date.desc()).all()
+    if current_user.role == 'branch_manager':
+        matches = [m for m in matches if m.branch_id == current_user.branch_id]
     return jsonify([m.to_dict(include_players=True) for m in matches])
 
 
@@ -242,6 +266,8 @@ def get_club_match_expenses(club_id):
 
     if current_user.role == 'admin' and current_user.club_id != club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'branch_manager' and current_user.club_id != club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     if current_user.role == 'coach' and current_user.club_id != club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     if current_user.role == 'player':
@@ -249,6 +275,8 @@ def get_club_match_expenses(club_id):
 
     season_id = get_effective_season_id(default_to_current=True)
     query = MatchExpense.query.filter_by(club_id=club_id)
+    if current_user.role == 'branch_manager':
+        query = query.filter_by(branch_id=current_user.branch_id)
     if season_id:
         query = query.filter_by(season_id=season_id)
     expenses = query.order_by(MatchExpense.payment_date.desc()).all()
@@ -272,6 +300,8 @@ def create_match_expense():
 
     if current_user.role == 'admin' and match.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مصروف لهذه المباراة'}), 403
+    if current_user.role == 'branch_manager' and match.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية لإضافة مصروف لهذه المباراة'}), 403
 
     allowed_types = {'transportation', 'ambulance', 'field_rent'}
     if data['expenseType'] not in allowed_types:
@@ -284,6 +314,7 @@ def create_match_expense():
 
         expense = MatchExpense(
             club_id=match.club_id,
+            branch_id=match.branch_id,
             match_id=match.id,
             season_id=match.season_id,
             expense_type=data['expenseType'],
@@ -311,6 +342,8 @@ def delete_match_expense(expense_id):
 
     if current_user.role == 'admin' and expense.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لحذف هذا المصروف'}), 403
+    if current_user.role == 'branch_manager' and expense.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية لحذف هذا المصروف'}), 403
 
     try:
         db.session.delete(expense)
@@ -328,6 +361,8 @@ def get_club_general_expenses(club_id):
 
     if current_user.role == 'admin' and current_user.club_id != club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'branch_manager' and current_user.club_id != club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     if current_user.role == 'coach' and current_user.club_id != club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     if current_user.role == 'player':
@@ -335,6 +370,8 @@ def get_club_general_expenses(club_id):
 
     season_id = get_effective_season_id(default_to_current=True)
     query = GeneralExpense.query.filter_by(club_id=club_id)
+    if current_user.role == 'branch_manager':
+        query = query.filter_by(branch_id=current_user.branch_id)
     if season_id:
         query = query.filter_by(season_id=season_id)
     expenses = query.order_by(GeneralExpense.payment_date.desc()).all()
@@ -353,6 +390,9 @@ def create_general_expense():
 
     if current_user.role == 'admin' and data['clubId'] != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مصروف لهذا النادي'}), 403
+    if current_user.role == 'branch_manager' and data['clubId'] != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لإضافة مصروف لهذا النادي'}), 403
+    branch_id = effective_branch_id_for_user(current_user)
 
     if data['expenseType'] not in ['training_field_rent', 'clothing']:
         return jsonify({'error': 'نوع المصروف غير مدعوم'}), 400
@@ -373,6 +413,7 @@ def create_general_expense():
 
         expense = GeneralExpense(
             club_id=data['clubId'],
+            branch_id=branch_id,
             season_id=season_id,
             expense_type=data['expenseType'],
             expense_scope=data['expenseScope'],
@@ -398,6 +439,8 @@ def delete_general_expense(expense_id):
         return jsonify({'error': 'المصروف غير موجود'}), 404
 
     if current_user.role == 'admin' and expense.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لحذف هذا المصروف'}), 403
+    if current_user.role == 'branch_manager' and expense.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية لحذف هذا المصروف'}), 403
 
     try:

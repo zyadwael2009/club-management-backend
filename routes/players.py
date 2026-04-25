@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Player, User, Coach, Subgroup, Club, PlayerPayment
 from routes.auth import login_required, admin_or_superadmin_required
+from branch_scope import effective_branch_id_for_user
 from season_context import get_effective_season_id
 from datetime import datetime, date
 import calendar
@@ -201,10 +202,13 @@ def get_players():
     subgroup_id = request.args.get('subgroup_id')
     
     query = Player.query
+    branch_id = effective_branch_id_for_user(current_user)
     
     # Role-based filtering
     if current_user.role == 'admin':
         # Admin sees only their club's players
+        query = query.filter_by(club_id=current_user.club_id)
+    elif current_user.role == 'branch_manager':
         query = query.filter_by(club_id=current_user.club_id)
     elif current_user.role == 'coach':
         # Coach sees only their club's players
@@ -217,6 +221,8 @@ def get_players():
         # Superadmin can filter by club
         if club_id:
             query = query.filter_by(club_id=club_id)
+    if branch_id:
+        query = query.filter_by(branch_id=branch_id)
     
     if subgroup_id:
         query = query.filter_by(subgroup_id=subgroup_id)
@@ -244,6 +250,8 @@ def get_player(player_id):
     # Check permissions
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    elif current_user.role == 'branch_manager' and player.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif current_user.role == 'coach' and player.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif current_user.role == 'player' and player.id != current_user.player_id:
@@ -263,6 +271,8 @@ def get_today_renewals():
     club_id = request.args.get('club_id')
 
     if current_user.role == 'admin':
+        club_id = current_user.club_id
+    elif current_user.role == 'branch_manager':
         club_id = current_user.club_id
     elif current_user.role == 'coach':
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
@@ -285,6 +295,8 @@ def get_today_renewals():
         .order_by(Player.full_name.asc())
         .all()
     )
+    if current_user.role == 'branch_manager':
+        rows = [(player, subgroup) for player, subgroup in rows if player.branch_id == current_user.branch_id]
 
     payload = []
     total = 0.0
@@ -317,6 +329,8 @@ def toggle_player_active(player_id):
     current_user = User.query.get(session['user_id'])
 
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا اللاعب'}), 403
+    if current_user.role == 'branch_manager' and player.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا اللاعب'}), 403
 
     data = request.get_json() or {}
@@ -397,6 +411,9 @@ def create_player():
     # Admin can only create players for their club
     if current_user.role == 'admin' and club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة لاعبين لهذا النادي'}), 403
+    if current_user.role == 'branch_manager' and club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لإضافة لاعبين لهذا النادي'}), 403
+    branch_id = effective_branch_id_for_user(current_user)
     
     # Check if username is provided and unique
     username = (data.get('username') or '').strip()
@@ -498,6 +515,7 @@ def create_player():
             phone_number=data.get('phoneNumber'),
             image_url=data.get('imageUrl'),
             club_id=club_id,
+            branch_id=branch_id,
             subgroup_id=subgroup_id,
             pin=data.get('pin'),
             is_active=bool(data.get('isActive', True)),
@@ -514,6 +532,7 @@ def create_player():
                 username=username,
                 role='player',
                 club_id=club_id,
+                branch_id=branch_id,
                 player_id=player.id
             )
             user.set_password(password)
@@ -536,6 +555,8 @@ def update_player(player_id):
     
     # Admin can only update their club's players
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا اللاعب'}), 403
+    if current_user.role == 'branch_manager' and player.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا اللاعب'}), 403
     
     data = request.get_json() or {}
@@ -660,6 +681,7 @@ def update_player(player_id):
 
     if user_account:
         user_account.club_id = player.club_id
+        user_account.branch_id = player.branch_id
 
     if is_monthly_player:
         player.monthly_amount = resolved_monthly
@@ -748,6 +770,8 @@ def delete_player(player_id):
     # Admin can only delete their club's players
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لحذف هذا اللاعب'}), 403
+    if current_user.role == 'branch_manager' and player.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية لحذف هذا اللاعب'}), 403
     
     try:
         # Delete associated user if exists
@@ -773,9 +797,12 @@ def get_stats():
     club_id = request.args.get('club_id')
     
     query = Player.query
+    branch_id = effective_branch_id_for_user(current_user)
     
     # Role-based filtering
     if current_user.role == 'admin':
+        query = query.filter_by(club_id=current_user.club_id)
+    elif current_user.role == 'branch_manager':
         query = query.filter_by(club_id=current_user.club_id)
     elif current_user.role == 'coach':
         if current_user.club_id:
@@ -788,6 +815,8 @@ def get_stats():
             query = query.filter_by(club_id=club_id)
     if club_id:
         query = query.filter_by(club_id=club_id)
+    if branch_id:
+        query = query.filter_by(branch_id=branch_id)
     
     players = query.all()
 

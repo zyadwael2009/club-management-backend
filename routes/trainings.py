@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Training, Subgroup, User, Player, CheckIn, CheckInTraining, TrainingSubgroup
 from routes.auth import login_required, admin_or_superadmin_required
+from branch_scope import effective_branch_id_for_user
 from season_context import get_effective_season_id
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -63,8 +64,11 @@ def list_trainings():
     season_id = get_effective_season_id(default_to_current=True)
 
     query = Training.query
+    branch_id = effective_branch_id_for_user(current_user)
 
     if current_user.role == 'admin':
+        query = query.filter_by(club_id=current_user.club_id)
+    elif current_user.role == 'branch_manager':
         query = query.filter_by(club_id=current_user.club_id)
     elif current_user.role == 'coach':
         if current_user.club_id:
@@ -83,6 +87,8 @@ def list_trainings():
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif club_id:
         query = query.filter_by(club_id=club_id)
+    if branch_id:
+        query = query.filter_by(branch_id=branch_id)
 
     if season_id:
         query = query.filter_by(season_id=season_id)
@@ -132,6 +138,9 @@ def create_training():
 
     if current_user.role == 'admin' and club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة تدريب لهذا النادي'}), 403
+    if current_user.role == 'branch_manager' and club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لإضافة تدريب لهذا النادي'}), 403
+    branch_id = effective_branch_id_for_user(current_user)
 
     unique_subgroup_ids = list(dict.fromkeys(subgroup_ids))
     subgroups = Subgroup.query.filter(Subgroup.id.in_(unique_subgroup_ids)).all()
@@ -154,6 +163,7 @@ def create_training():
         training = Training(
             name=name,
             club_id=club_id,
+            branch_id=branch_id,
             subgroup_id=primary_subgroup_id,
             season_id=season_id,
             training_scope=training_scope,
@@ -185,9 +195,11 @@ def get_training_attendance(training_id):
     current_user = User.query.get(session['user_id'])
     if current_user.role == 'admin' and training.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'branch_manager' and training.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     if current_user.role == 'coach' and training.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
-    if current_user.role not in ['admin', 'coach', 'superadmin']:
+    if current_user.role not in ['admin', 'coach', 'superadmin', 'branch_manager']:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
 
     subgroup_ids = training.assigned_subgroup_ids()
@@ -239,6 +251,8 @@ def delete_training(training_id):
 
     current_user = User.query.get(session['user_id'])
     if current_user.role == 'admin' and training.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لحذف هذا التدريب'}), 403
+    if current_user.role == 'branch_manager' and training.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية لحذف هذا التدريب'}), 403
 
     try:

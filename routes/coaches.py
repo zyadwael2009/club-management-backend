@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Coach, User, CoachPayment, CoachCheckIn
 from routes.auth import login_required, admin_or_superadmin_required
+from branch_scope import effective_branch_id_for_user
 from season_context import get_effective_season_id
 from werkzeug.utils import secure_filename
 import os
@@ -27,6 +28,11 @@ def list_coaches():
     elif current_user.role == 'admin':
         # Admin sees only their club's coaches
         coaches_list = Coach.query.filter_by(club_id=current_user.club_id).all()
+    elif current_user.role == 'branch_manager':
+        coaches_list = Coach.query.filter_by(
+            club_id=current_user.club_id,
+            branch_id=current_user.branch_id,
+        ).all()
     else:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     
@@ -45,6 +51,8 @@ def get_coach(coach_id):
     
     # Check permissions
     if current_user.role == 'admin' and coach.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    elif current_user.role == 'branch_manager' and coach.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif current_user.role == 'coach' and current_user.coach_id != coach_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
@@ -69,6 +77,9 @@ def create_coach():
     # Admin can only create coaches for their club
     if current_user.role == 'admin' and data['clubId'] != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مدربين لهذا النادي'}), 403
+    if current_user.role == 'branch_manager' and data['clubId'] != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لإضافة مدربين لهذا النادي'}), 403
+    branch_id = effective_branch_id_for_user(current_user)
     
     # Check if username is provided and unique
     username = data.get('username')
@@ -87,6 +98,7 @@ def create_coach():
         coach = Coach(
             full_name=data['fullName'],
             club_id=data['clubId'],
+            branch_id=branch_id,
             is_active=bool(data.get('isActive', True)),
             monthly_salary=data.get('monthlySalary'),
             contact_info=data.get('contactInfo'),
@@ -102,6 +114,7 @@ def create_coach():
                 username=username,
                 role='coach',
                 club_id=data['clubId'],
+                branch_id=branch_id,
                 coach_id=coach.id
             )
             user.set_password(password)
@@ -127,6 +140,8 @@ def update_coach(coach_id):
     
     # Admin can only update their club's coaches
     if current_user.role == 'admin' and coach.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا المدرب'}), 403
+    if current_user.role == 'branch_manager' and coach.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا المدرب'}), 403
     
     data = request.json
@@ -167,6 +182,8 @@ def toggle_coach_active(coach_id):
     current_user = User.query.get(session['user_id'])
     if current_user.role == 'admin' and coach.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا المدرب'}), 403
+    if current_user.role == 'branch_manager' and coach.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا المدرب'}), 403
 
     data = request.get_json() or {}
     make_active = data.get('isActive')
@@ -193,6 +210,8 @@ def delete_coach(coach_id):
     
     # Admin can only delete their club's coaches
     if current_user.role == 'admin' and coach.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لحذف هذا المدرب'}), 403
+    if current_user.role == 'branch_manager' and coach.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية لحذف هذا المدرب'}), 403
     
     try:
@@ -227,6 +246,8 @@ def get_coach_payments(coach_id):
     # Check permissions
     if current_user.role == 'admin' and coach.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    elif current_user.role == 'branch_manager' and coach.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif current_user.role == 'coach' and current_user.coach_id != coach_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     
@@ -246,6 +267,8 @@ def get_club_coach_payments(club_id):
 
     if current_user.role == 'admin' and current_user.club_id != club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'branch_manager' and current_user.club_id != club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     if current_user.role == 'coach' and current_user.club_id != club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     if current_user.role == 'player':
@@ -261,6 +284,8 @@ def get_club_coach_payments(club_id):
         .order_by(CoachPayment.payment_date.desc())
         .all()
     )
+    if current_user.role == 'branch_manager':
+        rows = [(payment, coach) for payment, coach in rows if payment.branch_id == current_user.branch_id]
 
     result = []
     for payment, coach in rows:
@@ -285,6 +310,8 @@ def add_coach_payment(coach_id):
     # Admin can only add payments for their club's coaches
     if current_user.role == 'admin' and coach.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة دفعات لهذا المدرب'}), 403
+    if current_user.role == 'branch_manager' and coach.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية لإضافة دفعات لهذا المدرب'}), 403
     
     data = request.json
     
@@ -299,6 +326,7 @@ def add_coach_payment(coach_id):
 
         payment = CoachPayment(
             coach_id=coach_id,
+            branch_id=coach.branch_id,
             season_id=season_id,
             amount=float(data['amount']),
             payment_date=datetime.fromisoformat(data['paymentDate'].replace('Z', '+00:00')).date(),
@@ -329,6 +357,8 @@ def delete_coach_payment(coach_id, payment_id):
     
     if current_user.role == 'admin' and coach.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لحذف هذه الدفعة'}), 403
+    if current_user.role == 'branch_manager' and coach.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية لحذف هذه الدفعة'}), 403
     
     try:
         db.session.delete(payment)
@@ -356,6 +386,8 @@ def get_coach_by_qr(qr_code):
     current_user = User.query.get(session['user_id'])
     if current_user.role == 'admin' and coach.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    elif current_user.role == 'branch_manager' and coach.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif current_user.role == 'coach' and current_user.coach_id != coach_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
 
@@ -377,6 +409,8 @@ def create_coach_checkin():
     current_user = User.query.get(session['user_id'])
     if current_user.role == 'admin' and coach.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للتسجيل لهذا المدرب'}), 403
+    elif current_user.role == 'branch_manager' and coach.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية للتسجيل لهذا المدرب'}), 403
     elif current_user.role == 'coach' and current_user.coach_id != coach.id:
         return jsonify({'error': 'ليس لديك صلاحية للتسجيل لهذا المدرب'}), 403
 
@@ -385,6 +419,7 @@ def create_coach_checkin():
     record = CoachCheckIn(
         coach_id=coach.id,
         club_id=coach.club_id,
+        branch_id=coach.branch_id,
         season_id=season_id,
         coach_name=coach.full_name,
     )
@@ -402,6 +437,8 @@ def get_coach_checkins(coach_id):
 
     current_user = User.query.get(session['user_id'])
     if current_user.role == 'admin' and coach.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    elif current_user.role == 'branch_manager' and coach.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif current_user.role == 'coach' and current_user.coach_id != coach_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403

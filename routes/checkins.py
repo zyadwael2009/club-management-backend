@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, CheckIn, Player, User, Training, CheckInTraining, TrainingSubgroup
 from routes.auth import login_required
+from branch_scope import effective_branch_id_for_user
 from season_context import get_effective_season_id
 from datetime import datetime, date, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -92,9 +93,12 @@ def get_checkins():
     season_id = get_effective_season_id(default_to_current=True)
     
     query = CheckIn.query
+    branch_id = effective_branch_id_for_user(current_user)
     
     # Role-based filtering
     if current_user.role == 'admin':
+        query = query.filter_by(club_id=current_user.club_id)
+    elif current_user.role == 'branch_manager':
         query = query.filter_by(club_id=current_user.club_id)
     elif current_user.role == 'coach':
         if current_user.club_id:
@@ -106,6 +110,8 @@ def get_checkins():
         # Superadmin can filter by club
         if club_id:
             query = query.filter_by(club_id=club_id)
+    if branch_id:
+        query = query.filter_by(branch_id=branch_id)
 
     if season_id:
         query = query.filter_by(season_id=season_id)
@@ -126,6 +132,8 @@ def get_player_checkins(player_id):
     
     # Check permissions
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    elif current_user.role == 'branch_manager' and player.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif current_user.role == 'coach' and player.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
@@ -171,6 +179,8 @@ def create_checkin():
     # Check permissions (admin/coach can check-in any player in their club)
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للتسجيل لهذا اللاعب'}), 403
+    elif current_user.role == 'branch_manager' and player.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية للتسجيل لهذا اللاعب'}), 403
     elif current_user.role == 'coach' and player.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للتسجيل لهذا اللاعب'}), 403
 
@@ -212,6 +222,7 @@ def create_checkin():
     checkin = CheckIn(
         player_id=data['playerId'],
         club_id=data.get('clubId') or player.club_id,
+        branch_id=player.branch_id,
         season_id=season_id,
         player_name=player.full_name,
         player_payment_status=player.payment_status,

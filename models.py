@@ -67,6 +67,29 @@ class Club(db.Model):
         }
 
 
+class Branch(db.Model):
+    __tablename__ = 'branches'
+
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    name = db.Column(db.String(255), nullable=False)
+    club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    manager_user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'clubId': self.club_id,
+            'managerUserId': self.manager_user_id,
+            'isActive': bool(self.is_active),
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+            'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class Subgroup(db.Model):
     """Subgroup (مجموعة فرعية) - categorizes players by type and birth year"""
     __tablename__ = 'subgroups'
@@ -74,6 +97,7 @@ class Subgroup(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     name = db.Column(db.String(255), nullable=False)  # e.g., "أكاديمية 2015"
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
     subgroup_type = db.Column(db.String(20), nullable=False)  # 'academy' (أكاديمية) or 'club' (نادي)
     birth_year = db.Column(db.Integer, nullable=False)  # e.g., 2015, 2014
     monthly_amount = db.Column(db.Float, nullable=True)  # Academy monthly amount for subgroup
@@ -90,6 +114,7 @@ class Subgroup(db.Model):
             'id': self.id,
             'name': self.name,
             'clubId': self.club_id,
+            'branchId': self.branch_id,
             'subgroupType': self.subgroup_type,
             'birthYear': self.birth_year,
             'monthlyAmount': self.monthly_amount,
@@ -107,6 +132,7 @@ class Training(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     name = db.Column(db.String(255), nullable=False)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
     subgroup_id = db.Column(db.String(36), db.ForeignKey('subgroups.id'), nullable=False)
     season_id = db.Column(db.String(36), nullable=True)
     training_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy | first_team
@@ -145,6 +171,7 @@ class Training(db.Model):
             'id': self.id,
             'name': self.name,
             'clubId': self.club_id,
+            'branchId': self.branch_id,
             'subgroupId': self.subgroup_id,
             'seasonId': self.season_id,
             'subgroupIds': subgroup_ids,
@@ -171,6 +198,7 @@ class Match(db.Model):
     
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
     season_id = db.Column(db.String(36), nullable=True)
     match_type = db.Column(db.String(20), nullable=False)  # 'friendly' (ودي) or 'official' (رسمي)
     opponent_name = db.Column(db.String(255), nullable=False)  # اسم الفريق المنافس
@@ -190,6 +218,7 @@ class Match(db.Model):
         result = {
             'id': self.id,
             'clubId': self.club_id,
+            'branchId': self.branch_id,
             'seasonId': self.season_id,
             'matchType': self.match_type,
             'opponentName': self.opponent_name,
@@ -228,6 +257,7 @@ class Player(db.Model):
     phone_number = db.Column(db.String(30), nullable=True)
     image_url = db.Column(db.String(500), nullable=True)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=True)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
     subgroup_id = db.Column(db.String(36), db.ForeignKey('subgroups.id'), nullable=True)
     pin = db.Column(db.String(10), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -273,6 +303,7 @@ class Player(db.Model):
             'phoneNumber': self.phone_number,
             'imageUrl': self.image_url,
             'clubId': self.club_id,
+            'branchId': self.branch_id,
             'subgroupId': self.subgroup_id,
             'subgroupName': self.subgroup.name if self.subgroup else None,
             'subgroupType': self.subgroup.subgroup_type if self.subgroup else None,
@@ -293,6 +324,7 @@ class CheckIn(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     player_id = db.Column(db.String(36), db.ForeignKey('players.id'), nullable=False)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=True)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
     season_id = db.Column(db.String(36), nullable=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     # Snapshot of player data at check-in time
@@ -304,6 +336,7 @@ class CheckIn(db.Model):
             'id': self.id,
             'playerId': self.player_id,
             'clubId': self.club_id,
+            'branchId': self.branch_id,
             'seasonId': self.season_id,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
             'playerSnapshot': {
@@ -350,6 +383,7 @@ class User(db.Model):
     
     # Related entity IDs based on role
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=True)  # for admin
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)  # for branch manager / scoped users
     player_id = db.Column(db.String(36), db.ForeignKey('players.id'), nullable=True)  # for player
     coach_id = db.Column(db.String(36), nullable=True)  # for coach (FK will be added after Coach model)
     
@@ -372,6 +406,7 @@ class User(db.Model):
             'username': self.username,
             'role': self.role,
             'clubId': self.club_id,
+            'branchId': self.branch_id,
             'playerId': self.player_id,
             'coachId': self.coach_id,
             'isActive': self.is_active,
@@ -403,6 +438,7 @@ class Coach(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     full_name = db.Column(db.String(255), nullable=False)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     deactivated_at = db.Column(db.DateTime, nullable=True)
     monthly_salary = db.Column(db.Float, nullable=True)  # Monthly salary amount
@@ -424,6 +460,7 @@ class Coach(db.Model):
             'id': self.id,
             'fullName': self.full_name,
             'clubId': self.club_id,
+            'branchId': self.branch_id,
             'isActive': bool(self.is_active),
             'deactivatedAt': self.deactivated_at.isoformat() if self.deactivated_at else None,
             'monthlySalary': self.monthly_salary,
@@ -444,6 +481,7 @@ class CoachCheckIn(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     coach_id = db.Column(db.String(36), db.ForeignKey('coaches.id'), nullable=False)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=True)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
     season_id = db.Column(db.String(36), nullable=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
     coach_name = db.Column(db.String(255))
@@ -453,6 +491,7 @@ class CoachCheckIn(db.Model):
             'id': self.id,
             'coachId': self.coach_id,
             'clubId': self.club_id,
+            'branchId': self.branch_id,
             'seasonId': self.season_id,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
             'coachSnapshot': {
@@ -467,6 +506,7 @@ class CoachPayment(db.Model):
     
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     coach_id = db.Column(db.String(36), db.ForeignKey('coaches.id'), nullable=False)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
     season_id = db.Column(db.String(36), nullable=True)
     amount = db.Column(db.Float, nullable=False)
     payment_date = db.Column(db.Date, nullable=False)
@@ -479,6 +519,7 @@ class CoachPayment(db.Model):
         return {
             'id': self.id,
             'coachId': self.coach_id,
+            'branchId': self.branch_id,
             'seasonId': self.season_id,
             'amount': self.amount,
             'paymentDate': self.payment_date.isoformat() if self.payment_date else None,
@@ -495,6 +536,7 @@ class PlayerPayment(db.Model):
     
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     player_id = db.Column(db.String(36), db.ForeignKey('players.id'), nullable=False)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
     season_id = db.Column(db.String(36), nullable=True)
     amount_paid = db.Column(db.Float, nullable=False)  # Amount received FROM player
     revenue_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
@@ -507,6 +549,7 @@ class PlayerPayment(db.Model):
         return {
             'id': self.id,
             'playerId': self.player_id,
+            'branchId': self.branch_id,
             'seasonId': self.season_id,
             'amountPaid': self.amount_paid,
             'revenueScope': self.revenue_scope,
@@ -523,6 +566,7 @@ class MatchExpense(db.Model):
 
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
     match_id = db.Column(db.String(36), db.ForeignKey('matches.id'), nullable=False)
     season_id = db.Column(db.String(36), nullable=True)
     expense_type = db.Column(db.String(30), nullable=False)  # transportation | ambulance | field_rent
@@ -537,6 +581,7 @@ class MatchExpense(db.Model):
         return {
             'id': self.id,
             'clubId': self.club_id,
+            'branchId': self.branch_id,
             'matchId': self.match_id,
             'seasonId': self.season_id,
             'expenseType': self.expense_type,
@@ -559,6 +604,7 @@ class GeneralExpense(db.Model):
 
     id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
     season_id = db.Column(db.String(36), nullable=True)
     expense_type = db.Column(db.String(40), nullable=False)  # training_field_rent | clothing
     expense_scope = db.Column(db.String(20), nullable=False, default='club')  # club | academy
@@ -572,6 +618,7 @@ class GeneralExpense(db.Model):
         return {
             'id': self.id,
             'clubId': self.club_id,
+            'branchId': self.branch_id,
             'seasonId': self.season_id,
             'expenseType': self.expense_type,
             'expenseScope': self.expense_scope,

@@ -14,6 +14,7 @@ def _ensure_schema_updates():
     player_columns = {col['name'] for col in inspector.get_columns('players')}
     coach_columns = {col['name'] for col in inspector.get_columns('coaches')} if 'coaches' in table_names else set()
     subgroup_columns = {col['name'] for col in inspector.get_columns('subgroups')}
+    user_columns = {col['name'] for col in inspector.get_columns('users')} if 'users' in table_names else set()
     player_payment_columns = {col['name'] for col in inspector.get_columns('player_payments')}
     coach_payment_columns = {col['name'] for col in inspector.get_columns('coach_payments')}
     match_expense_columns = set()
@@ -22,6 +23,7 @@ def _ensure_schema_updates():
     match_columns = set()
     coach_checkin_columns = set()
     training_columns = set()
+    branch_columns = {col['name'] for col in inspector.get_columns('branches')} if 'branches' in table_names else set()
     if 'match_expenses' in table_names:
         match_expense_columns = {col['name'] for col in inspector.get_columns('match_expenses')}
     if 'general_expenses' in table_names:
@@ -125,6 +127,42 @@ def _ensure_schema_updates():
             "updated_at DATETIME"
             ")"
         )
+    if 'branches' not in table_names:
+        statements.append(
+            "CREATE TABLE branches ("
+            "id VARCHAR(36) PRIMARY KEY, "
+            "name VARCHAR(255) NOT NULL, "
+            "club_id VARCHAR(36) NOT NULL, "
+            "manager_user_id VARCHAR(36), "
+            "is_active BOOLEAN DEFAULT 1, "
+            "created_at DATETIME, "
+            "updated_at DATETIME"
+            ")"
+        )
+    if 'branch_id' not in user_columns and 'users' in table_names:
+        statements.append("ALTER TABLE users ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in player_columns:
+        statements.append("ALTER TABLE players ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in subgroup_columns:
+        statements.append("ALTER TABLE subgroups ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in coach_columns and 'coaches' in table_names:
+        statements.append("ALTER TABLE coaches ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in training_columns and 'trainings' in table_names:
+        statements.append("ALTER TABLE trainings ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in match_columns and 'matches' in table_names:
+        statements.append("ALTER TABLE matches ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in checkin_columns and 'checkins' in table_names:
+        statements.append("ALTER TABLE checkins ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in coach_checkin_columns and 'coach_checkins' in table_names:
+        statements.append("ALTER TABLE coach_checkins ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in player_payment_columns:
+        statements.append("ALTER TABLE player_payments ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in coach_payment_columns:
+        statements.append("ALTER TABLE coach_payments ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in match_expense_columns and 'match_expenses' in table_names:
+        statements.append("ALTER TABLE match_expenses ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in general_expense_columns and 'general_expenses' in table_names:
+        statements.append("ALTER TABLE general_expenses ADD COLUMN branch_id VARCHAR(36)")
 
     for stmt in statements:
         try:
@@ -186,7 +224,7 @@ def create_app(config_class=Config):
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     
     # Register blueprints
-    from routes import clubs_bp, players_bp, checkins_bp, uploads_bp, subgroups_bp, matches_bp
+    from routes import clubs_bp, players_bp, checkins_bp, uploads_bp, subgroups_bp, matches_bp, branches_bp
     from routes.auth import auth
     from routes.coaches import coaches
     from routes.player_payments import player_payments
@@ -200,6 +238,7 @@ def create_app(config_class=Config):
     app.register_blueprint(uploads_bp, url_prefix='/api/images')
     app.register_blueprint(subgroups_bp, url_prefix='/api/subgroups')
     app.register_blueprint(matches_bp, url_prefix='/api/matches')
+    app.register_blueprint(branches_bp, url_prefix='/api/branches')
     app.register_blueprint(coaches, url_prefix='/api/coaches')
     app.register_blueprint(player_payments, url_prefix='/api/players')  # Nested under /api/players
     app.register_blueprint(trainings_bp, url_prefix='/api/trainings')

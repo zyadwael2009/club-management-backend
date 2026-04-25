@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, session
 from sqlalchemy import func, and_, or_
 from models import db, Subgroup, Club, User, Player, PlayerPayment
 from routes.auth import login_required, admin_or_superadmin_required
+from branch_scope import effective_branch_id_for_user
 from season_context import get_effective_season_id
 
 subgroups_bp = Blueprint('subgroups', __name__)
@@ -44,9 +45,12 @@ def get_subgroups():
     club_id = request.args.get('club_id')
     
     query = Subgroup.query
+    branch_id = effective_branch_id_for_user(current_user)
     
     # Role-based filtering
     if current_user.role == 'admin':
+        query = query.filter_by(club_id=current_user.club_id)
+    elif current_user.role == 'branch_manager':
         query = query.filter_by(club_id=current_user.club_id)
     elif current_user.role == 'coach':
         if current_user.club_id:
@@ -57,6 +61,8 @@ def get_subgroups():
         # Superadmin can filter by club
         if club_id:
             query = query.filter_by(club_id=club_id)
+    if branch_id:
+        query = query.filter_by(branch_id=branch_id)
     
     subgroups = query.order_by(Subgroup.birth_year.desc()).all()
     return jsonify([sg.to_dict() for sg in subgroups])
@@ -74,6 +80,8 @@ def get_subgroup(subgroup_id):
     
     # Check permissions
     if current_user.role == 'admin' and subgroup.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    elif current_user.role == 'branch_manager' and subgroup.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     elif current_user.role == 'coach' and subgroup.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
@@ -94,6 +102,9 @@ def create_subgroup():
     # Admin can only create subgroups for their club
     if current_user.role == 'admin' and data['clubId'] != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مجموعات لهذا النادي'}), 403
+    if current_user.role == 'branch_manager' and data['clubId'] != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لإضافة مجموعات لهذا النادي'}), 403
+    branch_id = effective_branch_id_for_user(current_user)
     
     if not data.get('subgroupType'):
         return jsonify({'error': 'نوع المجموعة مطلوب (أكاديمية أو نادي)'}), 400
@@ -148,6 +159,7 @@ def create_subgroup():
     subgroup = Subgroup(
         name=name,
         club_id=data['clubId'],
+        branch_id=branch_id,
         subgroup_type=data['subgroupType'],
         birth_year=birth_year,
         monthly_amount=monthly_amount,
@@ -173,6 +185,8 @@ def update_subgroup(subgroup_id):
     
     # Admin can only update their club's subgroups
     if current_user.role == 'admin' and subgroup.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية لتعديل هذه المجموعة'}), 403
+    if current_user.role == 'branch_manager' and subgroup.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية لتعديل هذه المجموعة'}), 403
     
     data = request.get_json()
@@ -262,6 +276,8 @@ def delete_subgroup(subgroup_id):
     # Admin can only delete their club's subgroups
     if current_user.role == 'admin' and subgroup.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لحذف هذه المجموعة'}), 403
+    if current_user.role == 'branch_manager' and subgroup.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية لحذف هذه المجموعة'}), 403
     
     db.session.delete(subgroup)
     db.session.commit()
@@ -270,11 +286,22 @@ def delete_subgroup(subgroup_id):
 
 
 @subgroups_bp.route('/club/<club_id>', methods=['GET'])
+@login_required
 def get_club_subgroups(club_id):
     """Get all subgroups for a specific club"""
     club = Club.query.get(club_id)
     if not club:
         return jsonify({'error': 'النادي غير موجود'}), 404
     
+    current_user = User.query.get(session['user_id'])
+    if current_user.role == 'admin' and current_user.club_id != club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'branch_manager' and current_user.club_id != club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role not in ['superadmin', 'admin', 'branch_manager', 'coach']:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+
     subgroups = Subgroup.query.filter_by(club_id=club_id).order_by(Subgroup.birth_year.desc()).all()
+    if current_user.role == 'branch_manager':
+        subgroups = [sg for sg in subgroups if sg.branch_id == current_user.branch_id]
     return jsonify([sg.to_dict() for sg in subgroups])
