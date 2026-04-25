@@ -301,7 +301,9 @@ def get_club_subgroups(club_id):
     if current_user.role not in ['superadmin', 'admin', 'branch_manager', 'coach']:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
 
-    subgroups = Subgroup.query.filter_by(club_id=club_id).order_by(Subgroup.birth_year.desc()).all()
-    if current_user.role == 'branch_manager':
-        subgroups = [sg for sg in subgroups if sg.branch_id == current_user.branch_id]
+    query = Subgroup.query.filter_by(club_id=club_id)
+    branch_id = effective_branch_id_for_user(current_user)
+    if branch_id:
+        query = query.filter_by(branch_id=branch_id)
+    subgroups = query.order_by(Subgroup.birth_year.desc()).all()
     return jsonify([sg.to_dict() for sg in subgroups])

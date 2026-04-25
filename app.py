@@ -46,6 +46,8 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE clubs ADD COLUMN deactivated_at DATETIME")
     if 'monthly_amount' not in columns:
         statements.append("ALTER TABLE clubs ADD COLUMN monthly_amount FLOAT")
+    if 'max_branches' not in columns:
+        statements.append("ALTER TABLE clubs ADD COLUMN max_branches INTEGER")
     if 'revenue_scope' not in player_payment_columns:
         statements.append("ALTER TABLE player_payments ADD COLUMN revenue_scope VARCHAR(20) DEFAULT 'club'")
     if 'payment_type' not in player_payment_columns:

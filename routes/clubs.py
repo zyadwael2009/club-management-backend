@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, Club, User, Player, Subgroup, Training, CheckIn, PlayerPayment, Season
+from models import db, Club, User, Player, Subgroup, Training, CheckIn, PlayerPayment, Season, Branch
 from routes.auth import superadmin_required, login_required
 from season_context import get_effective_season_id
 from datetime import datetime
@@ -75,6 +75,16 @@ def create_club():
         monthly_amount = float(monthly_amount) if monthly_amount not in [None, ''] else None
         if monthly_amount is not None and monthly_amount < 0:
             return jsonify({'error': 'القسط الشهري للنادي لا يمكن أن يكون سالباً'}), 400
+        max_branches = data.get('maxBranches')
+        if max_branches in [None, '']:
+            max_branches = 0
+        else:
+            try:
+                max_branches = int(max_branches)
+            except (TypeError, ValueError):
+                return jsonify({'error': 'حد الفروع يجب أن يكون رقماً صحيحاً'}), 400
+            if max_branches < 0:
+                return jsonify({'error': 'حد الفروع يجب أن يكون صفراً أو أكثر'}), 400
 
         # Create club
         club = Club(
@@ -84,6 +94,7 @@ def create_club():
             logo_url=data.get('logoUrl'),
             due_date=due_date,
             monthly_amount=monthly_amount,
+            max_branches=max_branches,
             is_active=True,
             deactivated_at=None,
         )
@@ -140,6 +151,21 @@ def update_club(club_id):
             if monthly_amount < 0:
                 return jsonify({'error': 'القسط الشهري للنادي لا يمكن أن يكون سالباً'}), 400
             club.monthly_amount = monthly_amount
+    if 'maxBranches' in data:
+        max_branches = data.get('maxBranches')
+        if max_branches in ['', None]:
+            club.max_branches = None
+        else:
+            try:
+                max_branches = int(max_branches)
+            except (TypeError, ValueError):
+                return jsonify({'error': 'حد الفروع يجب أن يكون رقماً صحيحاً'}), 400
+            if max_branches < 0:
+                return jsonify({'error': 'حد الفروع يجب أن يكون صفراً أو أكثر'}), 400
+            existing_branches = Branch.query.filter_by(club_id=club.id).count()
+            if max_branches < existing_branches:
+                return jsonify({'error': f'لا يمكن تعيين الحد إلى {max_branches} لأن النادي لديه {existing_branches} فروع حالياً'}), 400
+            club.max_branches = max_branches
     if 'isActive' in data:
         club.is_active = bool(data['isActive'])
         if club.is_active:

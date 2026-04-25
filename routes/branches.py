@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, session
 from datetime import datetime
-from models import db, Branch, User
+from models import db, Branch, User, Club
 from routes.auth import login_required
 
 branches_bp = Blueprint('branches', __name__)
@@ -76,6 +76,13 @@ def create_branch():
         return jsonify({'error': 'كلمة المرور يجب أن تكون 4 أحرف على الأقل'}), 400
     if current_user.role == 'admin' and current_user.club_id != club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإنشاء فرع لهذا النادي'}), 403
+    club = Club.query.get(club_id)
+    if not club:
+        return jsonify({'error': 'النادي غير موجود'}), 404
+    if club.max_branches is not None:
+        existing_count = Branch.query.filter_by(club_id=club_id).count()
+        if existing_count >= int(club.max_branches):
+            return jsonify({'error': f'تم الوصول للحد الأقصى للفروع ({club.max_branches}) لهذا النادي'}), 400
 
     existing = User.query.filter_by(username=manager_username).first()
     if existing:

@@ -18,16 +18,23 @@ def list_coaches():
     """List all coaches (filtered by club for admin)"""
     current_user = User.query.get(session['user_id'])
     
+    branch_id = effective_branch_id_for_user(current_user)
+
     if current_user.role == 'superadmin':
         # Superadmin sees all coaches
         club_id = request.args.get('clubId')
+        query = Coach.query
         if club_id:
-            coaches_list = Coach.query.filter_by(club_id=club_id).all()
-        else:
-            coaches_list = Coach.query.all()
+            query = query.filter_by(club_id=club_id)
+        if branch_id:
+            query = query.filter_by(branch_id=branch_id)
+        coaches_list = query.all()
     elif current_user.role == 'admin':
         # Admin sees only their club's coaches
-        coaches_list = Coach.query.filter_by(club_id=current_user.club_id).all()
+        query = Coach.query.filter_by(club_id=current_user.club_id)
+        if branch_id:
+            query = query.filter_by(branch_id=branch_id)
+        coaches_list = query.all()
     elif current_user.role == 'branch_manager':
         coaches_list = Coach.query.filter_by(
             club_id=current_user.club_id,

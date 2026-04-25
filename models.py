@@ -40,6 +40,7 @@ class Club(db.Model):
     logo_url = db.Column(db.String(500), nullable=True)
     due_date = db.Column(db.Date, nullable=True)
     monthly_amount = db.Column(db.Float, nullable=True)
+    max_branches = db.Column(db.Integer, nullable=True)
     is_active = db.Column(db.Boolean, default=True)
     deactivated_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -60,6 +61,7 @@ class Club(db.Model):
             'logoUrl': self.logo_url,
             'dueDate': self.due_date.isoformat() if self.due_date else None,
             'monthlyAmount': self.monthly_amount,
+            'maxBranches': self.max_branches,
             'isActive': self.is_active,
             'deactivatedAt': self.deactivated_at.isoformat() if self.deactivated_at else None,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
