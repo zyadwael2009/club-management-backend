@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Coach, User, CoachPayment, CoachCheckIn
 from routes.auth import login_required, admin_or_superadmin_required
-from branch_scope import effective_branch_id_for_user
+from branch_scope import effective_branch_id_for_user, resolve_creation_branch_for_user
 from season_context import get_effective_season_id
 from werkzeug.utils import secure_filename
 import os
@@ -86,7 +86,9 @@ def create_coach():
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مدربين لهذا النادي'}), 403
     if current_user.role == 'branch_manager' and data['clubId'] != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مدربين لهذا النادي'}), 403
-    branch_id = effective_branch_id_for_user(current_user)
+    branch_id, branch_error = resolve_creation_branch_for_user(current_user, data['clubId'])
+    if branch_error:
+        return jsonify({'error': branch_error}), 400
     
     # Check if username is provided and unique
     username = data.get('username')

@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Player, User, Coach, Subgroup, Club, PlayerPayment
 from routes.auth import login_required, admin_or_superadmin_required
-from branch_scope import effective_branch_id_for_user
+from branch_scope import effective_branch_id_for_user, resolve_creation_branch_for_user
 from season_context import get_effective_season_id
 from datetime import datetime, date
 import calendar
@@ -413,7 +413,9 @@ def create_player():
         return jsonify({'error': 'ليس لديك صلاحية لإضافة لاعبين لهذا النادي'}), 403
     if current_user.role == 'branch_manager' and club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة لاعبين لهذا النادي'}), 403
-    branch_id = effective_branch_id_for_user(current_user)
+    branch_id, branch_error = resolve_creation_branch_for_user(current_user, club_id)
+    if branch_error:
+        return jsonify({'error': branch_error}), 400
     
     # Check if username is provided and unique
     username = (data.get('username') or '').strip()
@@ -441,6 +443,8 @@ def create_player():
             return jsonify({'error': 'المجموعة الفرعية غير موجودة'}), 404
         if subgroup.club_id != club_id:
             return jsonify({'error': 'المجموعة الفرعية لا تتبع هذا النادي'}), 400
+        if branch_id and subgroup.branch_id != branch_id:
+            return jsonify({'error': 'المجموعة الفرعية لا تتبع الفرع المحدد'}), 400
 
     try:
         requested_monthly = _parse_optional_monthly_amount(data.get('monthlyAmount'))

@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Training, Subgroup, User, Player, CheckIn, CheckInTraining, TrainingSubgroup
 from routes.auth import login_required, admin_or_superadmin_required
-from branch_scope import effective_branch_id_for_user
+from branch_scope import effective_branch_id_for_user, resolve_creation_branch_for_user
 from season_context import get_effective_season_id
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -140,7 +140,9 @@ def create_training():
         return jsonify({'error': 'ليس لديك صلاحية لإضافة تدريب لهذا النادي'}), 403
     if current_user.role == 'branch_manager' and club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة تدريب لهذا النادي'}), 403
-    branch_id = effective_branch_id_for_user(current_user)
+    branch_id, branch_error = resolve_creation_branch_for_user(current_user, club_id)
+    if branch_error:
+        return jsonify({'error': branch_error}), 400
 
     unique_subgroup_ids = list(dict.fromkeys(subgroup_ids))
     subgroups = Subgroup.query.filter(Subgroup.id.in_(unique_subgroup_ids)).all()
@@ -150,6 +152,8 @@ def create_training():
     for subgroup in subgroups:
         if subgroup.club_id != club_id:
             return jsonify({'error': 'إحدى المجموعات الفرعية لا تتبع هذا النادي'}), 400
+        if branch_id and subgroup.branch_id != branch_id:
+            return jsonify({'error': 'إحدى المجموعات الفرعية لا تتبع الفرع المحدد'}), 400
 
     try:
         parsed_date = datetime.fromisoformat(training_date).date()

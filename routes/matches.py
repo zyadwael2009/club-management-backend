@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, Match, MatchExpense, GeneralExpense, Player, Club, User
+from models import db, Match, MatchExpense, GeneralExpense, Player, Club, User, Subgroup
 from routes.auth import login_required, admin_or_superadmin_required
-from branch_scope import effective_branch_id_for_user
+from branch_scope import effective_branch_id_for_user, resolve_creation_branch_for_user
 from season_context import get_effective_season_id
 from datetime import datetime
 
@@ -98,7 +98,9 @@ def create_match():
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مباريات لهذا النادي'}), 403
     if current_user.role == 'branch_manager' and data['clubId'] != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مباريات لهذا النادي'}), 403
-    branch_id = effective_branch_id_for_user(current_user)
+    branch_id, branch_error = resolve_creation_branch_for_user(current_user, data['clubId'])
+    if branch_error:
+        return jsonify({'error': branch_error}), 400
     
     if not data.get('matchType'):
         return jsonify({'error': 'نوع المباراة مطلوب (ودي أو رسمي)'}), 400
@@ -113,6 +115,14 @@ def create_match():
     club = Club.query.get(data['clubId'])
     if not club:
         return jsonify({'error': 'النادي غير موجود'}), 404
+    if data.get('subgroupId'):
+        subgroup = Subgroup.query.get(data.get('subgroupId'))
+        if not subgroup:
+            return jsonify({'error': 'المجموعة الفرعية غير موجودة'}), 404
+        if subgroup.club_id != data['clubId']:
+            return jsonify({'error': 'المجموعة الفرعية لا تتبع هذا النادي'}), 400
+        if branch_id and subgroup.branch_id != branch_id:
+            return jsonify({'error': 'المجموعة الفرعية لا تتبع الفرع المحدد'}), 400
     
     match = Match(
         club_id=data['clubId'],
@@ -392,7 +402,9 @@ def create_general_expense():
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مصروف لهذا النادي'}), 403
     if current_user.role == 'branch_manager' and data['clubId'] != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مصروف لهذا النادي'}), 403
-    branch_id = effective_branch_id_for_user(current_user)
+    branch_id, branch_error = resolve_creation_branch_for_user(current_user, data['clubId'])
+    if branch_error:
+        return jsonify({'error': branch_error}), 400
 
     if data['expenseType'] not in ['training_field_rent', 'clothing']:
         return jsonify({'error': 'نوع المصروف غير مدعوم'}), 400

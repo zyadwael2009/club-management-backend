@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify, session
 from sqlalchemy import func, and_, or_
 from models import db, Subgroup, Club, User, Player, PlayerPayment
 from routes.auth import login_required, admin_or_superadmin_required
-from branch_scope import effective_branch_id_for_user
+from branch_scope import effective_branch_id_for_user, resolve_creation_branch_for_user
 from season_context import get_effective_season_id
 
 subgroups_bp = Blueprint('subgroups', __name__)
@@ -104,7 +104,9 @@ def create_subgroup():
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مجموعات لهذا النادي'}), 403
     if current_user.role == 'branch_manager' and data['clubId'] != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية لإضافة مجموعات لهذا النادي'}), 403
-    branch_id = effective_branch_id_for_user(current_user)
+    branch_id, branch_error = resolve_creation_branch_for_user(current_user, data['clubId'])
+    if branch_error:
+        return jsonify({'error': branch_error}), 400
     
     if not data.get('subgroupType'):
         return jsonify({'error': 'نوع المجموعة مطلوب (أكاديمية أو نادي)'}), 400
