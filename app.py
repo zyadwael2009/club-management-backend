@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, jsonify, render_template, request, session, send_from_directory
 from flask_cors import CORS
 from config import Config
 from models import db, User, Season
@@ -275,6 +275,15 @@ def _backfill_legacy_season_ids(current_season_id):
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
+
+    web_build_dir = os.environ.get('WEB_BUILD_DIR') or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        'web',
+    )
+    app.config['WEB_BUILD_DIR'] = web_build_dir
+
+    def _web_ready():
+        return os.path.isfile(os.path.join(web_build_dir, 'index.html'))
     
     # Initialize extensions
     db.init_app(app)
@@ -329,6 +338,8 @@ def create_app(config_class=Config):
 
     @app.route('/')
     def root():
+        if _web_ready():
+            return send_from_directory(web_build_dir, 'index.html')
         return jsonify({
             'message': 'Club Management API is running',
             'health': '/api/health',
@@ -336,6 +347,17 @@ def create_app(config_class=Config):
             'privacy_policy': '/privacy-policy',
             'delete_account': '/delete-account',
         })
+
+    @app.route('/<path:path>')
+    def web_app(path):
+        if path.startswith('api'):
+            return jsonify({'error': 'Not found'}), 404
+        if _web_ready():
+            file_path = os.path.join(web_build_dir, path)
+            if os.path.isfile(file_path):
+                return send_from_directory(web_build_dir, path)
+            return send_from_directory(web_build_dir, 'index.html')
+        return jsonify({'error': 'Not found'}), 404
 
     @app.route('/api')
     def api_root():

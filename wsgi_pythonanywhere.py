@@ -29,16 +29,17 @@ import os
 #   /home/clubmanagment/backend  (if uploaded directly)
 # ============================================================
 
-project_home = '/home/clubmanagment/club-management-backend'
+project_home = '/home/zyadwael2009/clubhub-backend'
 
 # Add project to Python path
 if project_home not in sys.path:
     sys.path.insert(0, project_home)
 
 # Set environment variables
-os.environ['DATABASE_URL'] = 'sqlite:////home/clubmanagment/club-management-backend/instance/club_management.db'
+os.environ['DATABASE_URL'] = 'sqlite:////home/zyadwael2009/clubhub-backend/instance/club_management.db'
 os.environ['SECRET_KEY'] = 'your-super-secret-key-change-this-to-random-string'
 os.environ['UPLOAD_FOLDER'] = f'{project_home}/uploads'
+os.environ['WEB_BUILD_DIR'] = '/home/zyadwael2009/web'
 
 # Import the Flask app
 from app import create_app
