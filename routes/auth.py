@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, session
+from flask import Blueprint, request, jsonify, session, current_app
 from models import db, User, Club, Season
 from functools import wraps
 from datetime import datetime, date
@@ -128,6 +128,9 @@ def login():
     elif user.role == 'branch_manager' and user.club_id:
         club = Club.query.get(user.club_id)
         response_data['club'] = club.to_dict() if club else None
+
+    serializer = current_app.session_interface.get_signing_serializer(current_app)
+    response_data['sessionToken'] = serializer.dumps(dict(session)) if serializer else None
     
     return jsonify(response_data), 200
 

@@ -388,6 +388,7 @@ class User(db.Model):
     branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)  # for branch manager / scoped users
     player_id = db.Column(db.String(36), db.ForeignKey('players.id'), nullable=True)  # for player
     coach_id = db.Column(db.String(36), nullable=True)  # for coach (FK will be added after Coach model)
+    employee_id = db.Column(db.String(36), db.ForeignKey('employees.id'), nullable=True)  # for employee
     
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -411,6 +412,7 @@ class User(db.Model):
             'branchId': self.branch_id,
             'playerId': self.player_id,
             'coachId': self.coach_id,
+            'employeeId': self.employee_id,
             'isActive': self.is_active,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
             'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
@@ -630,4 +632,71 @@ class GeneralExpense(db.Model):
             'notes': self.notes,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
         }
+
+class Employee(db.Model):
+    """Employee model for managing staff"""
+    __tablename__ = 'employees'
+
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    full_name = db.Column(db.String(255), nullable=False)
+    club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=False)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
+    role = db.Column(db.String(100), nullable=False)  # Manually entered role
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    deactivated_at = db.Column(db.DateTime, nullable=True)
+    monthly_salary = db.Column(db.Float, nullable=True)
+    contact_info = db.Column(db.String(255), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    image_url = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        user = User.query.filter_by(employee_id=self.id).first()
+        return {
+            'id': self.id,
+            'fullName': self.full_name,
+            'clubId': self.club_id,
+            'branchId': self.branch_id,
+            'role': self.role,
+            'isActive': bool(self.is_active),
+            'deactivatedAt': self.deactivated_at.isoformat() if self.deactivated_at else None,
+            'monthlySalary': self.monthly_salary,
+            'contactInfo': self.contact_info,
+            'notes': self.notes,
+            'imageUrl': self.image_url,
+            'username': user.username if user else None,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+            'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+class EmployeePayment(db.Model):
+    """Track monthly salary payments to employees"""
+    __tablename__ = 'employee_payments'
+
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    employee_id = db.Column(db.String(36), db.ForeignKey('employees.id'), nullable=False)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
+    season_id = db.Column(db.String(36), nullable=True)
+    amount = db.Column(db.Float, nullable=False)
+    payment_date = db.Column(db.Date, nullable=False)
+    payment_month = db.Column(db.String(7), nullable=False)  # YYYY-MM
+    expense_scope = db.Column(db.String(20), nullable=False, default='club')
+    notes = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'employeeId': self.employee_id,
+            'branchId': self.branch_id,
+            'seasonId': self.season_id,
+            'amount': self.amount,
+            'paymentDate': self.payment_date.isoformat() if self.payment_date else None,
+            'paymentMonth': self.payment_month,
+            'expenseScope': self.expense_scope,
+            'notes': self.notes,
+            'createdAt': self.created_at.isoformat() if self.created_at else None,
+        }
+
 

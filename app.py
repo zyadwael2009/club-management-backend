@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request, session
 from flask_cors import CORS
 from config import Config
 from models import db, User, Season
@@ -14,9 +14,11 @@ def _ensure_schema_updates():
     player_columns = {col['name'] for col in inspector.get_columns('players')}
     coach_columns = {col['name'] for col in inspector.get_columns('coaches')} if 'coaches' in table_names else set()
     subgroup_columns = {col['name'] for col in inspector.get_columns('subgroups')}
+    employee_columns = {col['name'] for col in inspector.get_columns('employees')} if 'employees' in table_names else set()
     user_columns = {col['name'] for col in inspector.get_columns('users')} if 'users' in table_names else set()
     player_payment_columns = {col['name'] for col in inspector.get_columns('player_payments')}
     coach_payment_columns = {col['name'] for col in inspector.get_columns('coach_payments')}
+    employee_payment_columns = {col['name'] for col in inspector.get_columns('employee_payments')} if 'employee_payments' in table_names else set()
     match_expense_columns = set()
     general_expense_columns = set()
     checkin_columns = set()
@@ -82,6 +84,20 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE subgroups ADD COLUMN league_amount FLOAT")
     if 'league_due' not in player_columns:
         statements.append("ALTER TABLE players ADD COLUMN league_due FLOAT")
+    if 'branch_id' not in employee_columns and 'employees' in table_names:
+        statements.append("ALTER TABLE employees ADD COLUMN branch_id VARCHAR(36)")
+    if 'is_active' not in employee_columns and 'employees' in table_names:
+        statements.append("ALTER TABLE employees ADD COLUMN is_active BOOLEAN DEFAULT 1")
+    if 'deactivated_at' not in employee_columns and 'employees' in table_names:
+        statements.append("ALTER TABLE employees ADD COLUMN deactivated_at DATETIME")
+    if 'monthly_salary' not in employee_columns and 'employees' in table_names:
+        statements.append("ALTER TABLE employees ADD COLUMN monthly_salary FLOAT")
+    if 'contact_info' not in employee_columns and 'employees' in table_names:
+        statements.append("ALTER TABLE employees ADD COLUMN contact_info VARCHAR(255)")
+    if 'notes' not in employee_columns and 'employees' in table_names:
+        statements.append("ALTER TABLE employees ADD COLUMN notes TEXT")
+    if 'image_url' not in employee_columns and 'employees' in table_names:
+        statements.append("ALTER TABLE employees ADD COLUMN image_url VARCHAR(500)")
     if 'expense_scope' not in coach_payment_columns:
         statements.append("ALTER TABLE coach_payments ADD COLUMN expense_scope VARCHAR(20) DEFAULT 'club'")
     if 'expense_scope' not in match_expense_columns and 'match_expenses' in table_names:
@@ -141,8 +157,44 @@ def _ensure_schema_updates():
             "updated_at DATETIME"
             ")"
         )
+    if 'employees' not in table_names:
+        statements.append(
+            "CREATE TABLE employees ("
+            "id VARCHAR(36) PRIMARY KEY, "
+            "full_name VARCHAR(255) NOT NULL, "
+            "club_id VARCHAR(36) NOT NULL, "
+            "branch_id VARCHAR(36), "
+            "role VARCHAR(100) NOT NULL, "
+            "is_active BOOLEAN DEFAULT 1, "
+            "deactivated_at DATETIME, "
+            "monthly_salary FLOAT, "
+            "contact_info VARCHAR(255), "
+            "notes TEXT, "
+            "image_url VARCHAR(500), "
+            "created_at DATETIME, "
+            "updated_at DATETIME"
+            ")"
+        )
+    if 'employee_payments' not in table_names:
+        statements.append(
+            "CREATE TABLE employee_payments ("
+            "id VARCHAR(36) PRIMARY KEY, "
+            "employee_id VARCHAR(36) NOT NULL, "
+            "branch_id VARCHAR(36), "
+            "season_id VARCHAR(36), "
+            "amount FLOAT NOT NULL, "
+            "payment_date DATE NOT NULL, "
+            "payment_month VARCHAR(7) NOT NULL, "
+            "expense_scope VARCHAR(20) DEFAULT 'club', "
+            "notes TEXT, "
+            "created_at DATETIME, "
+            "FOREIGN KEY(employee_id) REFERENCES employees(id)"
+            ")"
+        )
     if 'branch_id' not in user_columns and 'users' in table_names:
         statements.append("ALTER TABLE users ADD COLUMN branch_id VARCHAR(36)")
+    if 'employee_id' not in user_columns and 'users' in table_names:
+        statements.append("ALTER TABLE users ADD COLUMN employee_id VARCHAR(36)")
     if 'branch_id' not in player_columns:
         statements.append("ALTER TABLE players ADD COLUMN branch_id VARCHAR(36)")
     if 'branch_id' not in subgroup_columns:
@@ -161,6 +213,12 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE player_payments ADD COLUMN branch_id VARCHAR(36)")
     if 'branch_id' not in coach_payment_columns:
         statements.append("ALTER TABLE coach_payments ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in employee_payment_columns and 'employee_payments' in table_names:
+        statements.append("ALTER TABLE employee_payments ADD COLUMN branch_id VARCHAR(36)")
+    if 'season_id' not in employee_payment_columns and 'employee_payments' in table_names:
+        statements.append("ALTER TABLE employee_payments ADD COLUMN season_id VARCHAR(36)")
+    if 'expense_scope' not in employee_payment_columns and 'employee_payments' in table_names:
+        statements.append("ALTER TABLE employee_payments ADD COLUMN expense_scope VARCHAR(20) DEFAULT 'club'")
     if 'branch_id' not in match_expense_columns and 'match_expenses' in table_names:
         statements.append("ALTER TABLE match_expenses ADD COLUMN branch_id VARCHAR(36)")
     if 'branch_id' not in general_expense_columns and 'general_expenses' in table_names:
@@ -221,18 +279,40 @@ def create_app(config_class=Config):
     # Initialize extensions
     db.init_app(app)
     CORS(app, origins=app.config['CORS_ORIGINS'], supports_credentials=True)
+
+    @app.before_request
+    def _load_session_from_web_token():
+        if 'user_id' in session:
+            return
+
+        token = request.headers.get('X-Session-Token')
+        serializer = app.session_interface.get_signing_serializer(app)
+        if token and serializer:
+            try:
+                data = serializer.loads(token)
+                session.clear()
+                session.update(data)
+                if 'user_id' in session:
+                    return
+            except Exception:
+                session.clear()
+
+        # Last-resort fallback for web clients if signed token is unavailable.
+        user_id = request.headers.get('X-Session-UserId')
+        if user_id:
+            session['user_id'] = user_id
     
     # Ensure upload folder exists
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     
     # Register blueprints
-    from routes import clubs_bp, players_bp, checkins_bp, uploads_bp, subgroups_bp, matches_bp, branches_bp
+    from routes import clubs_bp, players_bp, checkins_bp, uploads_bp, subgroups_bp, matches_bp, branches_bp, employees_bp
     from routes.auth import auth
     from routes.coaches import coaches
     from routes.player_payments import player_payments
     from routes.trainings import trainings_bp
     from routes.seasons import seasons_bp
-    
+
     app.register_blueprint(auth, url_prefix='/api/auth')
     app.register_blueprint(clubs_bp, url_prefix='/api/clubs')
     app.register_blueprint(players_bp, url_prefix='/api/players')
@@ -245,6 +325,7 @@ def create_app(config_class=Config):
     app.register_blueprint(player_payments, url_prefix='/api/players')  # Nested under /api/players
     app.register_blueprint(trainings_bp, url_prefix='/api/trainings')
     app.register_blueprint(seasons_bp, url_prefix='/api/seasons')
+    app.register_blueprint(employees_bp, url_prefix='/api/employees')
 
     @app.route('/')
     def root():
@@ -283,6 +364,7 @@ def create_app(config_class=Config):
     # Create database tables and superadmin
     with app.app_context():
         db.create_all()
+        print(f"Database file: {db.engine.url}")
         _ensure_schema_updates()
         # Create superadmin if not exists
         User.create_superadmin(username='zyadw', password='ZWL@2009')
