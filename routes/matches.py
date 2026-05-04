@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Match, MatchExpense, GeneralExpense, Player, Club, User, Subgroup
-from routes.auth import login_required, admin_or_superadmin_required
+from routes.auth import login_required, admin_or_superadmin_required, ensure_coach_permission
 from branch_scope import effective_branch_id_for_user, resolve_creation_branch_for_user
 from season_context import get_effective_season_id
 from datetime import datetime
@@ -13,6 +13,10 @@ matches_bp = Blueprint('matches', __name__)
 def get_matches():
     """Get all matches (filtered by club for admin/coach/player)"""
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'matches')
+    if permission_error:
+        return permission_error
     club_id = request.args.get('club_id')
     subgroup_id = request.args.get('subgroup_id')
     season_id = get_effective_season_id(default_to_current=True)
@@ -62,6 +66,10 @@ def get_match(match_id):
         return jsonify({'error': 'المباراة غير موجودة'}), 404
     
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'matches')
+    if permission_error:
+        return permission_error
     
     # Check permissions
     if current_user.role == 'admin' and match.club_id != current_user.club_id:

@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Club, User, Player, Subgroup, Training, CheckIn, PlayerPayment, Season, Branch
-from routes.auth import superadmin_required, login_required
+from routes.auth import superadmin_required, login_required, ensure_coach_permission
 from season_context import get_effective_season_id
 from datetime import datetime
 
@@ -12,6 +12,10 @@ clubs_bp = Blueprint('clubs', __name__)
 def get_clubs():
     """Get all clubs (superadmin sees all, admin sees only their club)"""
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'club_settings')
+    if permission_error:
+        return permission_error
     
     if current_user.role == 'superadmin':
         # Superadmin sees all clubs
@@ -19,6 +23,11 @@ def get_clubs():
     elif current_user.role in ['admin', 'branch_manager']:
         # Admin sees only their club
         clubs = Club.query.filter_by(id=current_user.club_id).all()
+    elif current_user.role == 'coach':
+        if current_user.club_id:
+            clubs = Club.query.filter_by(id=current_user.club_id).all()
+        else:
+            clubs = []
     else:
         # Coach/Player shouldn't access club list directly
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
@@ -33,11 +42,18 @@ def get_club(club_id):
     club = Club.query.get_or_404(club_id)
     
     current_user = User.query.get(session['user_id'])
+
+    if not (current_user.role == 'coach' and club.id == current_user.club_id):
+        permission_error = ensure_coach_permission(current_user, 'club_settings')
+        if permission_error:
+            return permission_error
     
     # Check permissions
     if current_user.role == 'admin' and club.id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     if current_user.role == 'branch_manager' and club.id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'coach' and club.id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     
     return jsonify(club.to_dict())

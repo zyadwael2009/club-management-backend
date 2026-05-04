@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from sqlalchemy import func, and_, or_
 from models import db, Subgroup, Club, User, Player, PlayerPayment
-from routes.auth import login_required, admin_or_superadmin_required
+from routes.auth import login_required, admin_or_superadmin_required, ensure_coach_permission
 from branch_scope import effective_branch_id_for_user, resolve_creation_branch_for_user
 from season_context import get_effective_season_id
 
@@ -42,6 +42,10 @@ def _get_player_league_revenue_totals(player_ids, season_id=None):
 def get_subgroups():
     """Get all subgroups (filtered by club for admin/coach)"""
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'subgroups')
+    if permission_error:
+        return permission_error
     club_id = request.args.get('club_id')
     
     query = Subgroup.query
@@ -77,6 +81,10 @@ def get_subgroup(subgroup_id):
         return jsonify({'error': 'المجموعة الفرعية غير موجودة'}), 404
     
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'subgroups')
+    if permission_error:
+        return permission_error
     
     # Check permissions
     if current_user.role == 'admin' and subgroup.club_id != current_user.club_id:

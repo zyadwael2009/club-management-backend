@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Player, PlayerPayment, User
-from routes.auth import login_required, admin_or_superadmin_required
+from routes.auth import login_required, admin_or_superadmin_required, ensure_coach_permission
 from season_context import get_effective_season_id
 from datetime import datetime, date
 import calendar
@@ -164,6 +164,10 @@ def get_player_payments(player_id):
         return jsonify({'error': 'اللاعب غير موجود'}), 404
     
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'payments')
+    if permission_error:
+        return permission_error
     
     # Check permissions
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
@@ -186,6 +190,10 @@ def get_player_payments(player_id):
 def get_club_player_payments(club_id):
     """Get all player payments for a club (used as revenues)."""
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'payments')
+    if permission_error:
+        return permission_error
 
     if current_user.role == 'admin' and current_user.club_id != club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403

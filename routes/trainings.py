@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Training, Subgroup, User, Player, CheckIn, CheckInTraining, TrainingSubgroup
-from routes.auth import login_required, admin_or_superadmin_required
+from routes.auth import login_required, admin_or_superadmin_required, ensure_coach_permission
 from branch_scope import effective_branch_id_for_user, resolve_creation_branch_for_user
 from season_context import get_effective_season_id
 from datetime import datetime, timezone
@@ -59,6 +59,10 @@ def _resolve_scope_from_subgroups(subgroups):
 def list_trainings():
     """List trainings (role-based filtering)"""
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'trainings')
+    if permission_error:
+        return permission_error
     club_id = request.args.get('club_id')
     subgroup_id = request.args.get('subgroup_id')
     season_id = get_effective_season_id(default_to_current=True)
@@ -197,6 +201,9 @@ def get_training_attendance(training_id):
         return jsonify({'error': 'التدريب غير موجود'}), 404
 
     current_user = User.query.get(session['user_id'])
+    permission_error = ensure_coach_permission(current_user, 'trainings')
+    if permission_error:
+        return permission_error
     if current_user.role == 'admin' and training.club_id != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     if current_user.role == 'branch_manager' and training.branch_id != current_user.branch_id:

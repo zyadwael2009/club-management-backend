@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify, session
 from datetime import datetime
 from models import db, Branch, User, Club
-from routes.auth import login_required
+from routes.auth import login_required, ensure_coach_permission
 
 branches_bp = Blueprint('branches', __name__)
 
@@ -15,6 +15,10 @@ def _can_manage_branches(user):
 @login_required
 def list_branches():
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'branches')
+    if permission_error:
+        return permission_error
     club_id = request.args.get('club_id')
 
     query = Branch.query
@@ -28,6 +32,11 @@ def list_branches():
         if not current_user.branch_id:
             return jsonify([]), 200
         query = query.filter_by(id=current_user.branch_id)
+    elif current_user.role == 'coach':
+        if current_user.club_id:
+            query = query.filter_by(club_id=current_user.club_id)
+        else:
+            return jsonify([]), 200
     else:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
 
@@ -44,11 +53,17 @@ def get_branch(branch_id):
     if not branch:
         return jsonify({'error': 'الفرع غير موجود'}), 404
 
+    permission_error = ensure_coach_permission(current_user, 'branches')
+    if permission_error:
+        return permission_error
+
     if current_user.role == 'admin' and current_user.club_id != branch.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     if current_user.role == 'branch_manager' and current_user.branch_id != branch.id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
-    if current_user.role not in ['superadmin', 'admin', 'branch_manager']:
+    if current_user.role == 'coach' and current_user.club_id != branch.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role not in ['superadmin', 'admin', 'branch_manager', 'coach']:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
 
     return jsonify(branch.to_dict()), 200

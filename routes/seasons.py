@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Season, User
-from routes.auth import login_required, superadmin_required
+from routes.auth import login_required, superadmin_required, ensure_coach_permission
 from datetime import datetime
 
 seasons_bp = Blueprint('seasons', __name__)
@@ -31,6 +31,10 @@ def _ensure_single_current_season():
 @seasons_bp.route('', methods=['GET'])
 @login_required
 def list_seasons():
+    current_user = User.query.get(session['user_id'])
+    permission_error = ensure_coach_permission(current_user, 'seasons')
+    if permission_error:
+        return permission_error
     _ensure_single_current_season()
     seasons = Season.query.order_by(Season.created_at.desc()).all()
     return jsonify([season.to_dict() for season in seasons]), 200
@@ -39,6 +43,10 @@ def list_seasons():
 @seasons_bp.route('/current', methods=['GET'])
 @login_required
 def get_current_season():
+    current_user = User.query.get(session['user_id'])
+    permission_error = ensure_coach_permission(current_user, 'seasons')
+    if permission_error:
+        return permission_error
     current = _ensure_single_current_season()
     if not current:
         return jsonify({'error': 'لا توجد مواسم بعد'}), 404

@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, Player, User, Coach, Subgroup, Club, PlayerPayment
-from routes.auth import login_required, admin_or_superadmin_required
+from routes.auth import login_required, admin_or_superadmin_required, ensure_coach_permission
 from branch_scope import effective_branch_id_for_user, resolve_creation_branch_for_user
 from season_context import get_effective_season_id
 from datetime import datetime, date
@@ -82,6 +82,37 @@ def _parse_optional_league_due(raw_value):
         raise ValueError('مبلغ اشتراك الدوري لا يمكن أن يكون أقل من صفر')
 
     return value
+
+
+def _normalize_custom_code(value):
+    if value is None:
+        return None
+    code = str(value).strip()
+    return code or None
+
+
+def _validate_custom_code(code):
+    if not code:
+        return None
+    reserved_prefixes = ('CLUB_PLAYER_', 'CLUB_COACH_', 'CLUB_MGMT_')
+    if code.startswith(reserved_prefixes):
+        return 'لا يمكن استخدام هذا الكود لأنه محجوز للنظام'
+    return None
+
+
+def _custom_code_conflict(code, player_id=None):
+    if not code:
+        return None
+
+    existing_player = Player.query.filter_by(custom_code=code).first()
+    if existing_player and existing_player.id != player_id:
+        return 'هذا الكود مستخدم بالفعل للاعب آخر'
+
+    existing_coach = Coach.query.filter_by(custom_code=code).first()
+    if existing_coach:
+        return 'هذا الكود مستخدم بالفعل لمدرب'
+
+    return None
 
 
 def _apply_player_renewals(player, today=None):
@@ -197,6 +228,10 @@ def _set_player_active_state(player, make_active):
 def get_players():
     """Get all players (filtered by club for admin, all for superadmin)"""
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'players')
+    if permission_error:
+        return permission_error
     
     club_id = request.args.get('club_id')
     subgroup_id = request.args.get('subgroup_id')
@@ -246,6 +281,10 @@ def get_player(player_id):
     """Get a single player by ID"""
     player = Player.query.get_or_404(player_id)
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'players')
+    if permission_error:
+        return permission_error
     
     # Check permissions
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
@@ -268,6 +307,10 @@ def get_player(player_id):
 def get_today_renewals():
     """Return academy players that renew today with total renewal amount."""
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'academy_renewals')
+    if permission_error:
+        return permission_error
     club_id = request.args.get('club_id')
 
     if current_user.role == 'admin':
@@ -334,6 +377,16 @@ def toggle_player_active(player_id):
         return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا اللاعب'}), 403
 
     data = request.get_json() or {}
+
+    if 'customCode' in data:
+        custom_code = _normalize_custom_code(data.get('customCode'))
+        custom_code_error = _validate_custom_code(custom_code)
+        if custom_code_error:
+            return jsonify({'error': custom_code_error}), 400
+        custom_code_conflict = _custom_code_conflict(custom_code, player_id=player.id)
+        if custom_code_conflict:
+            return jsonify({'error': custom_code_conflict}), 400
+        player.custom_code = custom_code
     make_active = data.get('isActive')
     if make_active is None:
         make_active = not bool(player.is_active)
@@ -347,21 +400,30 @@ def toggle_player_active(player_id):
 def get_player_by_qr(qr_code):
     """Get a player by QR code"""
     # QR code format: CLUB_PLAYER_{id} (or legacy CLUB_MGMT_{id})
-    if not qr_code.startswith('CLUB_PLAYER_') and not qr_code.startswith('CLUB_MGMT_'):
-        return jsonify({'error': 'Invalid QR code format'}), 400
+    raw_code = (qr_code or '').strip()
+    player = None
+    if raw_code.startswith('CLUB_PLAYER_') or raw_code.startswith('CLUB_MGMT_'):
+        player_id = (
+            raw_code.replace('CLUB_PLAYER_', '')
+            if raw_code.startswith('CLUB_PLAYER_')
+            else raw_code.replace('CLUB_MGMT_', '')
+        )
+        player = Player.query.get(player_id)
+    else:
+        player = Player.query.filter_by(custom_code=raw_code).first()
 
-    player_id = (
-        qr_code.replace('CLUB_PLAYER_', '')
-        if qr_code.startswith('CLUB_PLAYER_')
-        else qr_code.replace('CLUB_MGMT_', '')
-    )
-    player = Player.query.get_or_404(player_id)
+    if not player:
+        return jsonify({'error': 'اللاعب غير موجود'}), 404
     return jsonify(player.to_dict())
 
 
 @players_bp.route('/search', methods=['GET'])
 def search_players():
     """Search players by name or ID"""
+    current_user = User.query.get(session.get('user_id')) if 'user_id' in session else None
+    permission_error = ensure_coach_permission(current_user, 'players')
+    if permission_error:
+        return permission_error
     query_str = request.args.get('q', '').lower()
     club_id = request.args.get('club_id')
     
@@ -383,6 +445,10 @@ def search_players():
 @players_bp.route('/filter', methods=['GET'])
 def filter_players():
     """Filter players by payment status"""
+    current_user = User.query.get(session.get('user_id')) if 'user_id' in session else None
+    permission_error = ensure_coach_permission(current_user, 'players')
+    if permission_error:
+        return permission_error
     payment_status = request.args.get('payment_status')
     club_id = request.args.get('club_id')
     
@@ -416,6 +482,14 @@ def create_player():
     branch_id, branch_error = resolve_creation_branch_for_user(current_user, club_id)
     if branch_error:
         return jsonify({'error': branch_error}), 400
+
+    custom_code = _normalize_custom_code(data.get('customCode'))
+    custom_code_error = _validate_custom_code(custom_code)
+    if custom_code_error:
+        return jsonify({'error': custom_code_error}), 400
+    custom_code_conflict = _custom_code_conflict(custom_code)
+    if custom_code_conflict:
+        return jsonify({'error': custom_code_conflict}), 400
     
     # Check if username is provided and unique
     username = (data.get('username') or '').strip()
@@ -518,6 +592,7 @@ def create_player():
             notes=data.get('notes'),
             phone_number=data.get('phoneNumber'),
             image_url=data.get('imageUrl'),
+            custom_code=custom_code,
             club_id=club_id,
             branch_id=branch_id,
             subgroup_id=subgroup_id,
@@ -798,6 +873,10 @@ def delete_player(player_id):
 def get_stats():
     """Get player statistics (filtered by role)"""
     current_user = User.query.get(session['user_id'])
+
+    permission_error = ensure_coach_permission(current_user, 'dashboard')
+    if permission_error:
+        return permission_error
     club_id = request.args.get('club_id')
     
     query = Player.query

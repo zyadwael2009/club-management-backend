@@ -2,6 +2,7 @@ from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 import uuid
+from permissions import parse_permissions, DEFAULT_COACH_PERMISSIONS
 
 db = SQLAlchemy()
 
@@ -258,6 +259,7 @@ class Player(db.Model):
     notes = db.Column(db.Text, nullable=True)
     phone_number = db.Column(db.String(30), nullable=True)
     image_url = db.Column(db.String(500), nullable=True)
+    custom_code = db.Column(db.String(120), nullable=True)
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=True)
     branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
     subgroup_id = db.Column(db.String(36), db.ForeignKey('subgroups.id'), nullable=True)
@@ -304,6 +306,7 @@ class Player(db.Model):
             'notes': self.notes,
             'phoneNumber': self.phone_number,
             'imageUrl': self.image_url,
+            'customCode': self.custom_code,
             'clubId': self.club_id,
             'branchId': self.branch_id,
             'subgroupId': self.subgroup_id,
@@ -404,6 +407,13 @@ class User(db.Model):
     
     def to_dict(self):
         """Convert user to dictionary (without password hash)"""
+        coach_permissions = None
+        if self.role == 'coach' and self.coach_id:
+            coach = Coach.query.get(self.coach_id)
+            coach_permissions = parse_permissions(
+                coach.permissions_json if coach else None,
+                default=DEFAULT_COACH_PERMISSIONS,
+            )
         return {
             'id': self.id,
             'username': self.username,
@@ -413,6 +423,7 @@ class User(db.Model):
             'playerId': self.player_id,
             'coachId': self.coach_id,
             'employeeId': self.employee_id,
+            'coachPermissions': coach_permissions,
             'isActive': self.is_active,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
             'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
@@ -449,6 +460,8 @@ class Coach(db.Model):
     contact_info = db.Column(db.String(255), nullable=True)  # Phone, email, etc.
     notes = db.Column(db.Text, nullable=True)
     image_url = db.Column(db.String(500), nullable=True)
+    custom_code = db.Column(db.String(120), nullable=True)
+    permissions_json = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -459,6 +472,7 @@ class Coach(db.Model):
     def to_dict(self):
         # Get user info if exists
         user = User.query.filter_by(coach_id=self.id).first()
+        permissions = parse_permissions(self.permissions_json, default=DEFAULT_COACH_PERMISSIONS)
         
         return {
             'id': self.id,
@@ -471,7 +485,9 @@ class Coach(db.Model):
             'contactInfo': self.contact_info,
             'notes': self.notes,
             'imageUrl': self.image_url,
+            'customCode': self.custom_code,
             'qrCode': self.qr_code,
+            'permissions': permissions,
             'username': user.username if user else None,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
             'updatedAt': self.updated_at.isoformat() if self.updated_at else None,

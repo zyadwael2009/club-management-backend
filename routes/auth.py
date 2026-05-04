@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify, session, current_app
-from models import db, User, Club, Season
+from models import db, User, Club, Season, Coach
+from permissions import parse_permissions, DEFAULT_COACH_PERMISSIONS
 from functools import wraps
 from datetime import datetime, date
 
@@ -41,6 +42,25 @@ def _enforce_user_and_club_state(user):
             _deactivate_club_accounts_if_due(club)
             if not club.is_active:
                 return jsonify({'error': 'تم تعطيل حسابات النادي. تواصل مع المدير العام لإعادة التفعيل'}), 403
+    return None
+
+
+def _coach_permissions_for_user(user):
+    if not user or user.role != 'coach' or not user.coach_id:
+        return DEFAULT_COACH_PERMISSIONS
+    coach = Coach.query.get(user.coach_id)
+    return parse_permissions(
+        coach.permissions_json if coach else None,
+        default=DEFAULT_COACH_PERMISSIONS,
+    )
+
+
+def ensure_coach_permission(user, permission_key):
+    if not user or user.role != 'coach':
+        return None
+    permissions = _coach_permissions_for_user(user)
+    if permission_key not in permissions:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     return None
 
 # Simple session-based auth (could be upgraded to JWT later)

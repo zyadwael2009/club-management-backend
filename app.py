@@ -74,12 +74,18 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE players ADD COLUMN subscription_start_date DATE")
     if 'subscription_end_date' not in player_columns:
         statements.append("ALTER TABLE players ADD COLUMN subscription_end_date DATE")
+    if 'custom_code' not in player_columns:
+        statements.append("ALTER TABLE players ADD COLUMN custom_code VARCHAR(120)")
     if 'monthly_amount' not in subgroup_columns:
         statements.append("ALTER TABLE subgroups ADD COLUMN monthly_amount FLOAT")
     if 'is_active' not in coach_columns and 'coaches' in table_names:
         statements.append("ALTER TABLE coaches ADD COLUMN is_active BOOLEAN DEFAULT 1")
     if 'deactivated_at' not in coach_columns and 'coaches' in table_names:
         statements.append("ALTER TABLE coaches ADD COLUMN deactivated_at DATETIME")
+    if 'custom_code' not in coach_columns and 'coaches' in table_names:
+        statements.append("ALTER TABLE coaches ADD COLUMN custom_code VARCHAR(120)")
+    if 'permissions_json' not in coach_columns and 'coaches' in table_names:
+        statements.append("ALTER TABLE coaches ADD COLUMN permissions_json TEXT")
     if 'league_amount' not in subgroup_columns:
         statements.append("ALTER TABLE subgroups ADD COLUMN league_amount FLOAT")
     if 'league_due' not in player_columns:

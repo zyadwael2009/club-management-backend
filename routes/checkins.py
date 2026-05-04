@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify, session
 from models import db, CheckIn, Player, User, Training, CheckInTraining, TrainingSubgroup
-from routes.auth import login_required
+from routes.auth import login_required, ensure_coach_permission
 from branch_scope import effective_branch_id_for_user
 from season_context import get_effective_season_id
 from datetime import datetime, date, timezone
@@ -88,6 +88,13 @@ def _is_player_allowed_for_training(player, training):
 def get_checkins():
     """Get all check-ins (filtered by club for admin/coach)"""
     current_user = User.query.get(session['user_id'])
+    permission_error = ensure_coach_permission(current_user, 'checkin_history')
+    if permission_error:
+        return permission_error
+
+    permission_error = ensure_coach_permission(current_user, 'checkin_history')
+    if permission_error:
+        return permission_error
     club_id = request.args.get('club_id')
     limit = request.args.get('limit', 50, type=int)
     season_id = get_effective_season_id(default_to_current=True)
@@ -125,6 +132,12 @@ def get_checkins():
 def get_player_checkins(player_id):
     """Get check-ins for a specific player"""
     current_user = User.query.get(session['user_id'])
+    permission_error = ensure_coach_permission(current_user, 'checkin_history')
+    if permission_error:
+        return permission_error
+    permission_error = ensure_coach_permission(current_user, 'checkin_history')
+    if permission_error:
+        return permission_error
     player = Player.query.get(player_id)
     
     if not player:
@@ -160,6 +173,11 @@ def create_checkin():
     """Create a new check-in"""
     data = request.get_json()
     season_id = get_effective_season_id(default_to_current=True)
+
+    current_user = User.query.get(session['user_id'])
+    permission_error = ensure_coach_permission(current_user, 'checkin_scanner')
+    if permission_error:
+        return permission_error
     
     if not data or not data.get('playerId'):
         return jsonify({'error': 'معرف اللاعب مطلوب'}), 400
@@ -174,7 +192,10 @@ def create_checkin():
     if not bool(player.is_active):
         return jsonify({'error': 'لا يمكن تسجيل حضور لاعب غير نشط'}), 400
     
-    current_user = User.query.get(session['user_id'])
+    current_user = current_user or User.query.get(session['user_id'])
+    permission_error = ensure_coach_permission(current_user, 'checkin_scanner')
+    if permission_error:
+        return permission_error
     
     # Check permissions (admin/coach can check-in any player in their club)
     if current_user.role == 'admin' and player.club_id != current_user.club_id:
