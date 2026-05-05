@@ -24,6 +24,7 @@ def _ensure_schema_updates():
     checkin_columns = set()
     match_columns = set()
     coach_checkin_columns = set()
+    employee_checkin_columns = set()
     training_columns = set()
     branch_columns = {col['name'] for col in inspector.get_columns('branches')} if 'branches' in table_names else set()
     if 'match_expenses' in table_names:
@@ -36,6 +37,8 @@ def _ensure_schema_updates():
         match_columns = {col['name'] for col in inspector.get_columns('matches')}
     if 'coach_checkins' in table_names:
         coach_checkin_columns = {col['name'] for col in inspector.get_columns('coach_checkins')}
+    if 'employee_checkins' in table_names:
+        employee_checkin_columns = {col['name'] for col in inspector.get_columns('employee_checkins')}
     if 'trainings' in table_names:
         training_columns = {col['name'] for col in inspector.get_columns('trainings')}
 
@@ -124,6 +127,8 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE coach_payments ADD COLUMN season_id VARCHAR(36)")
     if 'season_id' not in coach_checkin_columns and 'coach_checkins' in table_names:
         statements.append("ALTER TABLE coach_checkins ADD COLUMN season_id VARCHAR(36)")
+    if 'season_id' not in employee_checkin_columns and 'employee_checkins' in table_names:
+        statements.append("ALTER TABLE employee_checkins ADD COLUMN season_id VARCHAR(36)")
     if 'season_id' not in match_expense_columns and 'match_expenses' in table_names:
         statements.append("ALTER TABLE match_expenses ADD COLUMN season_id VARCHAR(36)")
     if 'season_id' not in general_expense_columns and 'general_expenses' in table_names:
@@ -197,10 +202,25 @@ def _ensure_schema_updates():
             "FOREIGN KEY(employee_id) REFERENCES employees(id)"
             ")"
         )
+    if 'employee_checkins' not in table_names:
+        statements.append(
+            "CREATE TABLE employee_checkins ("
+            "id VARCHAR(36) PRIMARY KEY, "
+            "employee_id VARCHAR(36) NOT NULL, "
+            "club_id VARCHAR(36), "
+            "branch_id VARCHAR(36), "
+            "season_id VARCHAR(36), "
+            "timestamp DATETIME, "
+            "employee_name VARCHAR(255), "
+            "FOREIGN KEY(employee_id) REFERENCES employees(id)"
+            ")"
+        )
     if 'branch_id' not in user_columns and 'users' in table_names:
         statements.append("ALTER TABLE users ADD COLUMN branch_id VARCHAR(36)")
     if 'employee_id' not in user_columns and 'users' in table_names:
         statements.append("ALTER TABLE users ADD COLUMN employee_id VARCHAR(36)")
+    if 'session_token' not in user_columns and 'users' in table_names:
+        statements.append("ALTER TABLE users ADD COLUMN session_token VARCHAR(120)")
     if 'branch_id' not in player_columns:
         statements.append("ALTER TABLE players ADD COLUMN branch_id VARCHAR(36)")
     if 'branch_id' not in subgroup_columns:
@@ -215,6 +235,8 @@ def _ensure_schema_updates():
         statements.append("ALTER TABLE checkins ADD COLUMN branch_id VARCHAR(36)")
     if 'branch_id' not in coach_checkin_columns and 'coach_checkins' in table_names:
         statements.append("ALTER TABLE coach_checkins ADD COLUMN branch_id VARCHAR(36)")
+    if 'branch_id' not in employee_checkin_columns and 'employee_checkins' in table_names:
+        statements.append("ALTER TABLE employee_checkins ADD COLUMN branch_id VARCHAR(36)")
     if 'branch_id' not in player_payment_columns:
         statements.append("ALTER TABLE player_payments ADD COLUMN branch_id VARCHAR(36)")
     if 'branch_id' not in coach_payment_columns:
@@ -267,6 +289,7 @@ def _backfill_legacy_season_ids(current_season_id):
         f"UPDATE player_payments SET season_id = '{current_season_id}' WHERE season_id IS NULL",
         f"UPDATE coach_payments SET season_id = '{current_season_id}' WHERE season_id IS NULL",
         f"UPDATE coach_checkins SET season_id = '{current_season_id}' WHERE season_id IS NULL",
+        f"UPDATE employee_checkins SET season_id = '{current_season_id}' WHERE season_id IS NULL",
         f"UPDATE match_expenses SET season_id = '{current_season_id}' WHERE season_id IS NULL",
         f"UPDATE general_expenses SET season_id = '{current_season_id}' WHERE season_id IS NULL",
     ]

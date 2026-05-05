@@ -19,6 +19,8 @@ class User(db.Model):
     club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=True)  # for admin
     player_id = db.Column(db.String(36), db.ForeignKey('players.id'), nullable=True)  # for player
     coach_id = db.Column(db.String(36), db.ForeignKey('coaches.id'), nullable=True)  # for coach
+
+    session_token = db.Column(db.String(120), nullable=True)
     
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

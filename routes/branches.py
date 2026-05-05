@@ -150,11 +150,42 @@ def update_branch(branch_id):
         return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا الفرع'}), 403
 
     data = request.get_json() or {}
+    manager_username = (data.get('managerUsername') or '').strip()
+    manager_password = data.get('managerPassword')
+    manager = None
+    if branch.manager_user_id:
+        manager = User.query.get(branch.manager_user_id)
+    if manager is None:
+        manager = User.query.filter_by(branch_id=branch.id, role='branch_manager').first()
     if 'name' in data:
         branch.name = (data.get('name') or '').strip() or branch.name
     if 'isActive' in data:
         branch.is_active = bool(data.get('isActive'))
     branch.updated_at = datetime.utcnow()
+
+    if manager_username:
+        existing = User.query.filter_by(username=manager_username).first()
+        if existing and (manager is None or existing.id != manager.id):
+            return jsonify({'error': 'اسم مستخدم مدير الفرع موجود بالفعل'}), 400
+        if manager:
+            manager.username = manager_username
+        else:
+            manager = User(
+                username=manager_username,
+                role='branch_manager',
+                club_id=branch.club_id,
+                branch_id=branch.id,
+                is_active=True,
+            )
+            db.session.add(manager)
+            branch.manager_user_id = manager.id
+
+    if manager_password:
+        if len(manager_password) < 4:
+            return jsonify({'error': 'كلمة المرور يجب أن تكون 4 أحرف على الأقل'}), 400
+        if not manager:
+            return jsonify({'error': 'اسم المستخدم مطلوب لتحديث كلمة المرور'}), 400
+        manager.set_password(manager_password)
     db.session.commit()
     return jsonify(branch.to_dict()), 200
 

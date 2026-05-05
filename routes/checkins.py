@@ -264,3 +264,33 @@ def create_checkin():
     response['trainingId'] = training.id
     response['trainingName'] = training.name
     return jsonify(response), 201
+
+
+@checkins_bp.route('/<checkin_id>', methods=['DELETE'])
+@login_required
+def delete_checkin(checkin_id):
+    current_user = User.query.get(session['user_id'])
+    permission_error = ensure_coach_permission(current_user, 'checkin_history')
+    if permission_error:
+        return permission_error
+
+    if current_user.role not in ['superadmin', 'admin', 'branch_manager', 'coach']:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+
+    checkin = CheckIn.query.get(checkin_id)
+    if not checkin:
+        return jsonify({'error': 'تسجيل الحضور غير موجود'}), 404
+
+    if current_user.role == 'admin' and checkin.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للحذف'}), 403
+    if current_user.role == 'branch_manager' and checkin.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية للحذف'}), 403
+    if current_user.role == 'coach' and checkin.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للحذف'}), 403
+
+    link = CheckInTraining.query.filter_by(checkin_id=checkin.id).first()
+    if link:
+        db.session.delete(link)
+    db.session.delete(checkin)
+    db.session.commit()
+    return jsonify({'message': 'تم حذف تسجيل الحضور'}), 200

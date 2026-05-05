@@ -1,9 +1,22 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, Training, Subgroup, User, Player, CheckIn, CheckInTraining, TrainingSubgroup
+from models import (
+    db,
+    Training,
+    Subgroup,
+    User,
+    Player,
+    CheckIn,
+    CheckInTraining,
+    TrainingSubgroup,
+    Coach,
+    CoachCheckIn,
+    Employee,
+    EmployeeCheckIn,
+)
 from routes.auth import login_required, admin_or_superadmin_required, ensure_coach_permission
 from branch_scope import effective_branch_id_for_user, resolve_creation_branch_for_user
 from season_context import get_effective_season_id
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import or_
 import re
@@ -247,9 +260,78 @@ def get_training_attendance(training_id):
             'checkedInAtText': _to_egypt_text(checked_in_at) if checked_in_at else None,
         })
 
+    day_start = datetime.combine(training.training_date, datetime.min.time())
+    day_end = day_start + timedelta(days=1)
+
+    coach_query = Coach.query.filter_by(club_id=training.club_id, is_active=True)
+    if training.branch_id:
+        coach_query = coach_query.filter_by(branch_id=training.branch_id)
+    coaches = coach_query.order_by(Coach.full_name.asc()).all()
+
+    coach_checkins_query = CoachCheckIn.query.filter(
+        CoachCheckIn.club_id == training.club_id,
+        CoachCheckIn.timestamp >= day_start,
+        CoachCheckIn.timestamp < day_end,
+    )
+    if training.branch_id:
+        coach_checkins_query = coach_checkins_query.filter_by(branch_id=training.branch_id)
+    if training.season_id:
+        coach_checkins_query = coach_checkins_query.filter_by(season_id=training.season_id)
+    coach_checkins = coach_checkins_query.order_by(CoachCheckIn.timestamp.desc()).all()
+
+    latest_checkin_by_coach = {}
+    for row in coach_checkins:
+        if row.coach_id not in latest_checkin_by_coach:
+            latest_checkin_by_coach[row.coach_id] = row.timestamp
+
+    result_coaches = []
+    for coach in coaches:
+        checked_in_at = latest_checkin_by_coach.get(coach.id)
+        result_coaches.append({
+            'id': coach.id,
+            'fullName': coach.full_name,
+            'attended': checked_in_at is not None,
+            'checkedInAt': _to_egypt_iso(checked_in_at) if checked_in_at else None,
+            'checkedInAtText': _to_egypt_text(checked_in_at) if checked_in_at else None,
+        })
+
+    employee_query = Employee.query.filter_by(club_id=training.club_id, is_active=True)
+    if training.branch_id:
+        employee_query = employee_query.filter_by(branch_id=training.branch_id)
+    employees = employee_query.order_by(Employee.full_name.asc()).all()
+
+    employee_checkins_query = EmployeeCheckIn.query.filter(
+        EmployeeCheckIn.club_id == training.club_id,
+        EmployeeCheckIn.timestamp >= day_start,
+        EmployeeCheckIn.timestamp < day_end,
+    )
+    if training.branch_id:
+        employee_checkins_query = employee_checkins_query.filter_by(branch_id=training.branch_id)
+    if training.season_id:
+        employee_checkins_query = employee_checkins_query.filter_by(season_id=training.season_id)
+    employee_checkins = employee_checkins_query.order_by(EmployeeCheckIn.timestamp.desc()).all()
+
+    latest_checkin_by_employee = {}
+    for row in employee_checkins:
+        if row.employee_id not in latest_checkin_by_employee:
+            latest_checkin_by_employee[row.employee_id] = row.timestamp
+
+    result_employees = []
+    for employee in employees:
+        checked_in_at = latest_checkin_by_employee.get(employee.id)
+        result_employees.append({
+            'id': employee.id,
+            'fullName': employee.full_name,
+            'attended': checked_in_at is not None,
+            'checkedInAt': _to_egypt_iso(checked_in_at) if checked_in_at else None,
+            'checkedInAtText': _to_egypt_text(checked_in_at) if checked_in_at else None,
+        })
+
     return jsonify({
         'training': training.to_dict(),
         'players': result_players,
+        'coaches': result_coaches,
+        'employees': result_employees,
     }), 200
 
 

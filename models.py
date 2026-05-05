@@ -392,6 +392,8 @@ class User(db.Model):
     player_id = db.Column(db.String(36), db.ForeignKey('players.id'), nullable=True)  # for player
     coach_id = db.Column(db.String(36), nullable=True)  # for coach (FK will be added after Coach model)
     employee_id = db.Column(db.String(36), db.ForeignKey('employees.id'), nullable=True)  # for employee
+
+    session_token = db.Column(db.String(120), nullable=True)
     
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -667,6 +669,10 @@ class Employee(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    @property
+    def qr_code(self):
+        return f'CLUB_EMPLOYEE_{self.id}'
+
     def to_dict(self):
         user = User.query.filter_by(employee_id=self.id).first()
         return {
@@ -682,8 +688,35 @@ class Employee(db.Model):
             'notes': self.notes,
             'imageUrl': self.image_url,
             'username': user.username if user else None,
+            'qrCode': self.qr_code,
             'createdAt': self.created_at.isoformat() if self.created_at else None,
             'updatedAt': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class EmployeeCheckIn(db.Model):
+    """Employee attendance records"""
+    __tablename__ = 'employee_checkins'
+
+    id = db.Column(db.String(36), primary_key=True, default=generate_uuid)
+    employee_id = db.Column(db.String(36), db.ForeignKey('employees.id'), nullable=False)
+    club_id = db.Column(db.String(36), db.ForeignKey('clubs.id'), nullable=True)
+    branch_id = db.Column(db.String(36), db.ForeignKey('branches.id'), nullable=True)
+    season_id = db.Column(db.String(36), nullable=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    employee_name = db.Column(db.String(255))
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'employeeId': self.employee_id,
+            'clubId': self.club_id,
+            'branchId': self.branch_id,
+            'seasonId': self.season_id,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'employeeSnapshot': {
+                'fullName': self.employee_name,
+            },
         }
 
 class EmployeePayment(db.Model):

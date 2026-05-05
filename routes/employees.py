@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify, session
-from models import db, Employee, EmployeePayment, User
+from models import db, Employee, EmployeePayment, EmployeeCheckIn, User
 from routes.auth import login_required, ensure_coach_permission
+from season_context import get_effective_season_id
 from flask_cors import CORS
 import uuid
 from datetime import datetime
@@ -23,7 +24,7 @@ def _parse_payment_date(value):
     return None
 
 
-def _require_employee_access():
+def _require_employee_access(allow_employee=False):
     current_user = User.query.get(session.get('user_id')) if 'user_id' in session else None
     if not current_user:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), None
@@ -32,7 +33,11 @@ def _require_employee_access():
     if permission_error:
         return permission_error, None
 
-    if current_user.role not in ['superadmin', 'admin', 'branch_manager', 'coach']:
+    allowed_roles = ['superadmin', 'admin', 'branch_manager', 'coach']
+    if allow_employee:
+        allowed_roles.append('employee')
+
+    if current_user.role not in allowed_roles:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), None
 
     return None, current_user
@@ -65,7 +70,7 @@ def get_employees():
 @login_required
 def get_employee(id):
     print(f"DEBUG: Entering get_employee for {id}")
-    access_error, current_user = _require_employee_access()
+    access_error, current_user = _require_employee_access(allow_employee=True)
     if access_error:
         return access_error
     try:
@@ -73,6 +78,8 @@ def get_employee(id):
         if not employee:
             return jsonify({'error': 'Employee not found'}), 404
         if current_user.role in ['admin', 'branch_manager', 'coach'] and employee.club_id != current_user.club_id:
+            return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+        if current_user.role == 'employee' and current_user.employee_id != employee.id:
             return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
         return jsonify(employee.to_dict())
     except Exception as e:
@@ -90,6 +97,15 @@ def create_employee():
     if current_user.role in ['admin', 'branch_manager', 'coach'] and data.get('clubId') != current_user.club_id:
         return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
     try:
+        username = (data.get('username') or '').strip()
+        password = data.get('password')
+        if username:
+            existing_user = User.query.filter_by(username=username).first()
+            if existing_user:
+                return jsonify({'error': 'اسم المستخدم موجود بالفعل'}), 400
+            if not password or len(password) < 4:
+                return jsonify({'error': 'كلمة المرور يجب أن تكون 4 أحرف على الأقل'}), 400
+
         employee = Employee(
             full_name=data['fullName'],
             club_id=data['clubId'],
@@ -102,14 +118,14 @@ def create_employee():
         )
         db.session.add(employee)
 
-        if data.get('username') and data.get('password'):
+        if username:
             user = User(
-                username=data['username'],
+                username=username,
                 role='employee',
                 club_id=employee.club_id,
                 employee_id=employee.id,
             )
-            user.set_password(data['password'])
+            user.set_password(password)
             db.session.add(user)
 
         db.session.commit()
@@ -133,7 +149,10 @@ def update_employee(id):
         if current_user.role in ['admin', 'branch_manager', 'coach'] and employee.club_id != current_user.club_id:
             return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
 
-        data = request.get_json()
+        data = request.get_json() or {}
+        username = (data.get('username') or '').strip()
+        password = data.get('password')
+        user = User.query.filter_by(employee_id=employee.id).first()
         employee.full_name = data.get('fullName', employee.full_name)
         employee.role = data.get('role', employee.role)
         employee.monthly_salary = data.get('monthlySalary', employee.monthly_salary)
@@ -143,11 +162,140 @@ def update_employee(id):
         employee.is_active = data.get('isActive', employee.is_active)
         employee.branch_id = data.get('branchId', employee.branch_id)
 
+        if username:
+            existing_user = User.query.filter_by(username=username).first()
+            if existing_user and (user is None or existing_user.id != user.id):
+                return jsonify({'error': 'اسم المستخدم موجود بالفعل'}), 400
+            if user:
+                user.username = username
+            else:
+                user = User(
+                    username=username,
+                    role='employee',
+                    club_id=employee.club_id,
+                    branch_id=employee.branch_id,
+                    employee_id=employee.id,
+                    is_active=employee.is_active,
+                )
+                db.session.add(user)
+
+        if password:
+            if len(password) < 4:
+                return jsonify({'error': 'كلمة المرور يجب أن تكون 4 أحرف على الأقل'}), 400
+            if not user:
+                return jsonify({'error': 'اسم المستخدم مطلوب لتحديث كلمة المرور'}), 400
+            user.set_password(password)
+
+        if user:
+            user.is_active = employee.is_active
+
         db.session.commit()
         return jsonify(employee.to_dict())
     except Exception as e:
         print(f"DEBUG: Error in update_employee: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+
+@employees_bp.route('/qr/<qr_code>', methods=['GET'], strict_slashes=False)
+@login_required
+def get_employee_by_qr(qr_code):
+    raw_code = (qr_code or '').strip()
+    employee = None
+    if raw_code.startswith('CLUB_EMPLOYEE_'):
+        employee_id = raw_code.replace('CLUB_EMPLOYEE_', '')
+        employee = Employee.query.get(employee_id)
+    else:
+        employee = Employee.query.get(raw_code)
+    if not employee:
+        return jsonify({'error': 'الموظف غير موجود'}), 404
+
+    current_user = User.query.get(session['user_id'])
+    permission_error = ensure_coach_permission(current_user, 'checkin_scanner')
+    if permission_error:
+        return permission_error
+
+    if current_user.role == 'admin' and employee.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'branch_manager' and employee.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'coach' and employee.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'employee' and current_user.employee_id != employee.id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+
+    return jsonify(employee.to_dict()), 200
+
+
+@employees_bp.route('/checkins', methods=['POST'], strict_slashes=False)
+@login_required
+def create_employee_checkin():
+    data = request.get_json() or {}
+    employee_id = data.get('employeeId')
+    if not employee_id:
+        return jsonify({'error': 'معرف الموظف مطلوب'}), 400
+
+    employee = Employee.query.get(employee_id)
+    if not employee:
+        return jsonify({'error': 'الموظف غير موجود'}), 404
+
+    current_user = User.query.get(session['user_id'])
+    permission_error = ensure_coach_permission(current_user, 'checkin_scanner')
+    if permission_error:
+        return permission_error
+
+    if current_user.role == 'admin' and employee.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للتسجيل لهذا الموظف'}), 403
+    if current_user.role == 'branch_manager' and employee.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية للتسجيل لهذا الموظف'}), 403
+    if current_user.role == 'coach' and employee.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للتسجيل لهذا الموظف'}), 403
+    if current_user.role == 'employee' and current_user.employee_id != employee.id:
+        return jsonify({'error': 'ليس لديك صلاحية للتسجيل لهذا الموظف'}), 403
+
+    season_id = get_effective_season_id(default_to_current=True)
+
+    record = EmployeeCheckIn(
+        employee_id=employee.id,
+        club_id=employee.club_id,
+        branch_id=employee.branch_id,
+        season_id=season_id,
+        employee_name=employee.full_name,
+    )
+    db.session.add(record)
+    db.session.commit()
+    return jsonify(record.to_dict()), 201
+
+
+@employees_bp.route('/<id>/checkins', methods=['GET'], strict_slashes=False)
+@login_required
+def get_employee_checkins(id):
+    employee = Employee.query.get(id)
+    if not employee:
+        return jsonify({'error': 'الموظف غير موجود'}), 404
+
+    current_user = User.query.get(session['user_id'])
+    if current_user.role != 'employee' or current_user.employee_id != id:
+        permission_error = ensure_coach_permission(current_user, 'checkin_history')
+        if permission_error:
+            return permission_error
+
+    if current_user.role == 'admin' and employee.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'branch_manager' and employee.branch_id != current_user.branch_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'coach' and employee.club_id != current_user.club_id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+    if current_user.role == 'employee' and current_user.employee_id != id:
+        return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+
+    limit = request.args.get('limit', 20, type=int)
+    season_id = get_effective_season_id(default_to_current=True)
+    query = EmployeeCheckIn.query.filter_by(employee_id=id)
+    if season_id:
+        query = query.filter_by(season_id=season_id)
+
+    rows = query.order_by(EmployeeCheckIn.timestamp.desc()).limit(limit).all()
+    return jsonify([row.to_dict() for row in rows]), 200
 
 @employees_bp.route('/<id>', methods=['DELETE'], strict_slashes=False)
 @login_required
@@ -174,7 +322,7 @@ def delete_employee(id):
 @login_required
 def get_employee_payments(id):
     print(f"DEBUG: Entering get_employee_payments for {id}")
-    access_error, current_user = _require_employee_access()
+    access_error, current_user = _require_employee_access(allow_employee=True)
     if access_error:
         return access_error
     try:
@@ -183,6 +331,8 @@ def get_employee_payments(id):
             employee = Employee.query.get(id)
             if employee and employee.club_id != current_user.club_id:
                 return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
+        if current_user.role == 'employee' and current_user.employee_id != id:
+            return jsonify({'error': 'ليس لديك صلاحية للوصول'}), 403
         return jsonify([p.to_dict() for p in payments])
     except Exception as e:
         print(f"DEBUG: Error in get_employee_payments: {str(e)}")

@@ -213,7 +213,10 @@ def update_coach(coach_id):
     if current_user.role == 'branch_manager' and coach.branch_id != current_user.branch_id:
         return jsonify({'error': 'ليس لديك صلاحية لتعديل هذا المدرب'}), 403
     
-    data = request.json
+    data = request.json or {}
+    username = (data.get('username') or '').strip()
+    password = data.get('password')
+    user = User.query.filter_by(coach_id=coach.id).first()
     
     try:
         # Update coach fields
@@ -232,6 +235,32 @@ def update_coach(coach_id):
         if 'isActive' in data:
             coach.is_active = bool(data['isActive'])
             coach.deactivated_at = None if coach.is_active else datetime.utcnow()
+            if user:
+                user.is_active = coach.is_active
+
+        if username:
+            existing_user = User.query.filter_by(username=username).first()
+            if existing_user and (user is None or existing_user.id != user.id):
+                return jsonify({'error': 'اسم المستخدم موجود بالفعل'}), 400
+            if user:
+                user.username = username
+            else:
+                user = User(
+                    username=username,
+                    role='coach',
+                    club_id=coach.club_id,
+                    branch_id=coach.branch_id,
+                    coach_id=coach.id,
+                    is_active=coach.is_active,
+                )
+                db.session.add(user)
+
+        if password:
+            if len(password) < 4:
+                return jsonify({'error': 'كلمة المرور يجب أن تكون 4 أحرف على الأقل'}), 400
+            if not user:
+                return jsonify({'error': 'اسم المستخدم مطلوب لتحديث كلمة المرور'}), 400
+            user.set_password(password)
         
         coach.updated_at = datetime.utcnow()
         db.session.commit()
